@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String       @id @default(uuid())
+  fullName    String
+  username    String       @unique
+  email       String       @unique
+  passwordHash String
+  phone       String?
+  address     String?
+  avatarUrl   String?
+  roleId      String
+  role        Role         @relation(fields: [roleId], references: [id])
+  schedules   Schedule[]
+  commandLogs CommandLog[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  description String?
+  isSystem    Boolean          @default(false)
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id     String           @id @default(uuid())
+  module String
+  action String
+  roles  RolePermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Room {
+  id          String       @id @default(uuid())
+  name        String
+  picName     String?
+  picPhone    String?
+  location    String?
+  description String?
+  imageUrl    String?
+  isCritical  Boolean      @default(false)
+  devices     Device[]
+  schedules   Schedule[]
+  commandLogs CommandLog[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("rooms")
+}
+
+model Gateway {
+  id               String    @id @default(uuid())
+  eui              String    @unique
+  name             String
+  description      String?
+  simcard          String?
+  powerSource      String?
+  modelUnit        String?
+  installationDate DateTime?
+  status           String    @default("offline")
+  lastSeenAt       DateTime?
+  devices          Device[]
+
+  @@map("gateways")
+}
+
+model Device {
+  id              String          @id @default(uuid())
+  eui             String          @unique
+  roomId          String
+  gatewayId       String
+  name            String
+  deviceType      String?
+  intervalMinutes Int             @default(5)
+  status          String          @default("off")
+  room            Room            @relation(fields: [roomId], references: [id])
+  gateway         Gateway         @relation(fields: [gatewayId], references: [id])
+  readings        EnergyReading[]
+  schedules       Schedule[]
+  commandLogs     CommandLog[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("devices")
+}
+
+model EnergyReading {
+  id         BigInt   @id @default(autoincrement())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [id])
+  powerWatt  Float?
+  usageKwh   Float?
+  recordedAt DateTime @default(now())
+
+  @@index([deviceId, recordedAt])
+  @@map("energy_readings")
+}
+
+model Schedule {
+  id            String       @id @default(uuid())
+  roomId        String
+  deviceId      String?
+  action        String
+  scheduledDate DateTime
+  startTime     String
+  endTime       String?
+  repeatType    String       @default("none")
+  repeatDays    Json?
+  status        String       @default("active")
+  createdById   String
+  room          Room         @relation(fields: [roomId], references: [id])
+  device        Device?      @relation(fields: [deviceId], references: [id])
+  createdBy     User         @relation(fields: [createdById], references: [id])
+  commandLogs   CommandLog[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@map("schedules")
+}
+
+// Audit log - mencatat setiap eksekusi ON/OFF, baik manual maupun by schedule
+model CommandLog {
+  id                String    @id @default(uuid())
+  roomId            String
+  deviceId          String?
+  action            String
+  triggerType       String // "manual" | "scheduled"
+  triggeredByUserId String? // null kalau triggerType = scheduled
+  scheduleId        String? // null kalau triggerType = manual
+  executedAt        DateTime  @default(now())
+  status            String // "success" | "failed" | "gateway_offline"
+  notes             String?
+  room              Room      @relation(fields: [roomId], references: [id])
+  device            Device?   @relation(fields: [deviceId], references: [id])
+  triggeredBy       User?     @relation(fields: [triggeredByUserId], references: [id])
+  schedule          Schedule? @relation(fields: [scheduleId], references: [id])
+
+  @@map("command_logs")
+}
