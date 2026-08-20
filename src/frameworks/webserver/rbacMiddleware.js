@@ -4,7 +4,7 @@
  * @param {import('express').NextFunction} next
  */
 
-import { prisma } from '../../../frameworks/database/prismaClient'
+import { prisma } from '../database/prismaClient'
 
 
  function checkPermission(module, action) {

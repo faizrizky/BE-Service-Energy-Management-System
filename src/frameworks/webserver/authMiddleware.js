@@ -4,7 +4,7 @@
  * @param {import('express').NextFunction} next
  */
 
-import { config } from '../../../config/config';
+import { config } from '../../config/config';
 const jwt = require('jsonwebtoken');
 
 function authMiddleware(req,res,next) {

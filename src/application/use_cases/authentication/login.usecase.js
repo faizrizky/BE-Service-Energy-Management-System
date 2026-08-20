@@ -1,14 +1,7 @@
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 import { config } from '../../../config/config';
 import { prisma } from '../../../frameworks/database/prismaClient';
-const bcrypt = require('bcrypt');
-
-const jwt = require('jsonwebtoken');
-
-/**
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
- */
 
 function login(username, password) {
     const user = await prisma.user.findUnique({
@@ -30,13 +23,20 @@ function login(username, password) {
     }
 
     const token = jwt.sign(
-        {
-            id: user.id,
-            roleId: user.roleId,
-            roleName: user.roleName,
-        },config.jwt.secret,
-        {
-            
-        }
-    )
+    { id: user.id, roleId: user.roleId, roleName: user.role.name },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn },
+  )
+
+  return{
+    token,
+    user:{
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role.name
+    }
+  }
 }
+
+module.exports = {login}
