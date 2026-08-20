@@ -7,9 +7,9 @@ const { errorHandler, notFoundHandler } = require('./errorHandler');
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const roleRoutes = require('./routes/role.routes');
-
-// TODO: tambahkan router module lain di sini seiring development
-// (room, device, gateway, schedule, report)
+const gatewayRoutes = require('./routes/gateway.routes');
+const deviceRoutes = require('./routes/device.routes');
+const roomRoutes = require('./routes/room.routes');
 
 function createServer() {
   const app = express();
@@ -22,6 +22,9 @@ function createServer() {
   app.use('/api/auth', authRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/roles', roleRoutes);
+  app.use('/api/gateways', gatewayRoutes);
+  app.use('/api/devices', deviceRoutes);
+  app.use('/api/rooms', roomRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
