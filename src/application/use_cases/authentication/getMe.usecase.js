@@ -1,18 +1,18 @@
-import { prisma } from '../../../frameworks/database/prismaClient';
+const { prisma } = require('../../../frameworks/database/prismaClient');
 
 async function getMe(userId) {
-    const user = await prisma.user.findUnique({
-        where: {id:userId},
-        include: {role: true}
-    })
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { role: true },
+  });
 
-    if(!user){
-        const err = new Error('User tidak ditemukan')
-        err.status = 404
-        throw err
-    }
+  if (!user) {
+    const err = new Error('User tidak ditemukan');
+    err.status = 404;
+    throw err;
+  }
 
-    return {
+  return {
     id: user.id,
     fullName: user.fullName,
     username: user.username,
@@ -24,4 +24,4 @@ async function getMe(userId) {
   };
 }
 
-module.exports = {getMe}
+module.exports = { getMe };

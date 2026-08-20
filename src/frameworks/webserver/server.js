@@ -8,8 +8,8 @@ const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const roleRoutes = require('./routes/role.routes');
 
-// TODO: import & pasang router per module di sini seiring development
-// (authentication, user, role, room, device, gateway, schedule, report)
+// TODO: tambahkan router module lain di sini seiring development
+// (room, device, gateway, schedule, report)
 
 function createServer() {
   const app = express();

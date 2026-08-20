@@ -1,28 +1,28 @@
 const { prisma } = require('../../../frameworks/database/prismaClient');
 
 async function listRoles() {
-    return prisma.role.findMany({
-        include: {permissions:{include:{permission: true}}}
-    })
+  return prisma.role.findMany({
+    include: { permissions: { include: { permission: true } } },
+  });
 }
 
 async function getRoleById(id) {
-    return prisma.role.findUnique({
-        where:{id},
-        include: {permissions:{include:{permission: true}}}
-    })
+  return prisma.role.findUnique({
+    where: { id },
+    include: { permissions: { include: { permission: true } } },
+  });
 }
 
 async function createRole(data) {
-    const role = await prisma.role.create({
-        data: {name : data.name, description: data.description}
-    })
+  const role = await prisma.role.create({
+    data: { name: data.name, description: data.description },
+  });
 
-    if (Array.isArray(data.permissionIds)){
-        await assignPermissions(id, data.permissionIds);
-    }
+  if (Array.isArray(data.permissionIds)) {
+    await assignPermissions(role.id, data.permissionIds);
+  }
 
-    return role
+  return role;
 }
 
 async function updateRole(id, data) {
@@ -40,28 +40,27 @@ async function updateRole(id, data) {
 }
 
 async function deleteRole(id) {
-    return prisma.role.delete({where:{id}})
+  return prisma.role.delete({ where: { id } });
 }
 
-async function assignPermission(roleId, permissionIds) {
-    await prisma.rolePermission.createMany({
-        data: permissionIds.map((permissionIds)=>({roleId, permissionIds})),
-        skipDuplicates: true
-    })
+async function assignPermissions(roleId, permissionIds) {
+  await prisma.rolePermission.createMany({
+    data: permissionIds.map((permissionId) => ({ roleId, permissionId })),
+    skipDuplicates: true,
+  });
 }
 
 async function listPermissions() {
-    return prisma.permission.findMany({
-        orderBy:[{module:'asc'}, {action: 'asc'}]
-    })
+  return prisma.permission.findMany({
+    orderBy: [{ module: 'asc' }, { action: 'asc' }],
+  });
 }
 
 module.exports = {
-    assignPermission,
-    createRole,
-    deleteRole,
-    getRoleById,
-    listPermissions,
-    listRoles,
-    updateRole
-}
+  listRoles,
+  getRoleById,
+  createRole,
+  updateRole,
+  deleteRole,
+  listPermissions,
+};
