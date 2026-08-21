@@ -13,5 +13,6 @@ router.get('/:id/devices', checkPermission('room', 'view'), controller.devices);
 router.post('/', checkPermission('room', 'create'), controller.store);
 router.put('/:id', checkPermission('room', 'edit'), controller.update);
 router.delete('/:id', checkPermission('room', 'delete'), controller.destroy);
+router.post('/:id/power', checkPermission('room', 'power_control'), controller.power);
 
 module.exports = router;

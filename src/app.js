@@ -2,6 +2,8 @@ const { validateConfig, config } = require('./config/config');
 const logger = require('./frameworks/helpers/logger');
 const { connectDatabase } = require('./frameworks/database/prismaClient');
 const { connectRedis } = require('./frameworks/tools/redisClient');
+const { connectMqtt } = require('./frameworks/mqtt/client');
+const { subscribeDeviceStatus } = require('./frameworks/mqtt/subscriber');
 const { createServer } = require('./frameworks/webserver/server');
 
 async function bootstrap() {
@@ -10,6 +12,8 @@ async function bootstrap() {
 
     await connectDatabase();
     connectRedis();
+    connectMqtt();
+    subscribeDeviceStatus();
 
     const app = createServer();
 

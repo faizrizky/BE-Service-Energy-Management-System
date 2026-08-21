@@ -58,4 +58,17 @@ async function devices(req, res, next) {
   }
 }
 
-module.exports = { index, show, store, update, destroy, devices };
+async function power(req, res, next) {
+  try {
+    const { action } = req.body;
+    if (!['on', 'off'].includes(action)) {
+      return res.status(400).json({ message: 'action harus "on" atau "off"' });
+    }
+    const result = await roomUseCase.powerRoom(req.params.id, action, req.user.id);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { index, show, store, update, destroy, devices, power };

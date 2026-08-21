@@ -47,4 +47,17 @@ async function destroy(req, res, next) {
   }
 }
 
-module.exports = { index, show, store, update, destroy };
+async function power(req, res, next) {
+    try {
+        const {action} = req.body
+        if(!['on', 'off'].includes(action)){
+            return res.status(400).json({ message: 'Action harus "on" atau "off"' });
+        }
+        const result = await deviceUseCase.powerDevice(req.params.id,action, req.user.id)
+        res.json({data: result})
+    } catch (err) {
+        next(err)
+    }
+}
+
+module.exports = { index, show, store, update, destroy, power };
