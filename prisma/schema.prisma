@@ -87,6 +87,8 @@ model Gateway {
   status           String    @default("offline")
   lastSeenAt       DateTime?
   devices          Device[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@map("gateways")
 }

@@ -1,4 +1,4 @@
-const { prisma } = ("../../../frameworks/database/prismaClient");
+const { prisma } = require("../../../frameworks/database/prismaClient");
 const { publishDeviceCommand } = require('../../../frameworks/mqtt/publisher');
 
 async function listRooms() {
@@ -29,8 +29,8 @@ async function createRoom(data) {
     })
 }
 
-async function updateRoom(params) {
-      return prisma.room.update({
+async function updateRoom(id, data) {
+  return prisma.room.update({
     where: { id },
     data: {
       name: data.name,
@@ -56,57 +56,53 @@ async function listDevicesInRoom(roomId) {
 }
 
 async function powerRoom(roomId, action, userId) {
-    const room = await prisma.room.findUnique({
-        where: {id: roomId},
-        include: {device: {include:{gateway:true}}}
-    })
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    include: { devices: { include: { gateway: true } } },
+  });
 
-    if(!room){
-        const err = new Error('Room tidak ditemukan')
-        err.status(404)
-        throw err
+  if (!room) {
+    const err = new Error('Room tidak ditemukan');
+    err.status = 404;
+    throw err;
+  }
+
+  const results = [];
+
+  for (const device of room.devices) {
+    let status = 'success';
+    let notes = null;
+
+    try {
+      await publishDeviceCommand(device.gateway.eui, device.eui, action);
+    } catch (err) {
+      status = 'failed';
+      notes = err.message;
     }
 
-    const results = []
+    await prisma.commandLog.create({
+      data: {
+        roomId: room.id,
+        deviceId: device.id,
+        action,
+        triggerType: 'manual',
+        triggeredByUserId: userId,
+        status,
+        notes,
+      },
+    });
 
-    for (const device of room.devices){
-        let status = 'success'
-        let notes = null
-        
-        try {
-            await publishDeviceCommand(device.gateway.eui, device.eui, action)
-        } catch (err) {
-            status = 'failed'
-            notes = err.message 
-        }
-        await prisma.commandLog.create({
-            data: {
-                roomId: room.id,
-                deviceId: device.id,
-                action,
-                triggerType: 'manual',
-                triggeredByUserId: userId,
-                status,
-                notes,
-            }
-        })
-
-        if(status === 'success') await prisma.device.update({where: {id: device.id}, data:{status : action}})
-
-        results.push({deviceId: device.id, status, notes})
+    if (status === 'success') {
+      await prisma.device.update({ where: { id: device.id }, data: { status: action } });
     }
 
-    return {roomId, action, results}
+    results.push({ deviceId: device.id, status, notes });
+  }
+
+  return { roomId, action, results };
 }
 
-
-
 module.exports = {
-  listRooms,
-  getRoomById,
-  createRoom,
-  updateRoom,
-  deleteRoom,
-  listDevicesInRoom,
-  powerRoom
+  listRooms, getRoomById, createRoom, updateRoom, deleteRoom, listDevicesInRoom,
+  powerRoom,
 };

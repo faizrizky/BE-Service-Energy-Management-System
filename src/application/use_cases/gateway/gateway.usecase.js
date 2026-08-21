@@ -1,24 +1,16 @@
 const { prisma } = require('../../../frameworks/database/prismaClient');
 
-
-async function listGateways(params) {
-    return prisma.gateway.findMany({
-        orderBy: {createdAt: 'desc'}
-    })
+async function listGateways() {
+  return prisma.gateway.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 async function getGatewayById(id) {
-    return prisma.gateway.create({
-        data:{
-            eui: data.eui,
-            name: data.name,
-            description: data.description,
-            simcard: data.simcard,
-            powerSource: data.powerSource,
-            modelUnit: data.modelUnit,
-            installationDate: data.installationDate ? new Date(data.installationDate) : undefined,
-        }
-    })
+  return prisma.gateway.findUnique({
+    where: { id },
+    include: { devices: true },
+  });
 }
 
 async function createGateway(data) {
@@ -35,8 +27,8 @@ async function createGateway(data) {
   });
 }
 
-async function updateGateway(id, params) {
-      return prisma.gateway.update({
+async function updateGateway(id, data) {
+  return prisma.gateway.update({
     where: { id },
     data: {
       name: data.name,

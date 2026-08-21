@@ -29,4 +29,4 @@ function getClient(){
     return client
 }
 
-module.exports = {connectMqtt,getClient}
+module.exports = { connectMqtt, getClient };

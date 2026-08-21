@@ -1,4 +1,4 @@
-const { getClient } = ("./client");
+const { getClient } = require("./client");
 const logger = require('../helpers/logger');
 
 function publishDeviceCommand(gatewayEui, deviceEui, action){

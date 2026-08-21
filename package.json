@@ -10,7 +10,8 @@
     "start": "node src/app.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "simulate": "node scripts/device-simulator.js"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
