@@ -1,32 +1,32 @@
-const { prisma } = require("../../../frameworks/database/prismaClient");
+const { prisma } = require('../../../frameworks/database/prismaClient');
 const { publishDeviceCommand } = require('../../../frameworks/mqtt/publisher');
 
 async function listRooms() {
-    return prisma.room.findMany({
-        include: {devices: true},
-        orderBy: {createdAt: 'desc'}
-    })
+  return prisma.room.findMany({
+    include: { devices: true },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 async function getRoomById(id) {
-    return prisma.room.findUnique({
-        where: {id},
-        include: {devices:{include:{gateway:true}}}
-    })
+  return prisma.room.findUnique({
+    where: { id },
+    include: { devices: { include: { gateway: true } } },
+  });
 }
 
 async function createRoom(data) {
-    return prisma.room.create({
-        data:{
-            name: data.name,
-            picName: data.picName,
-            picPhone: data.picPhone,
-            location: data.location,
-            description: data.description,
-            imageUrl: data.imageUrl,
-            isCritical: data.isCritical || false,
-        }
-    })
+  return prisma.room.create({
+    data: {
+      name: data.name,
+      picName: data.picName,
+      picPhone: data.picPhone,
+      location: data.location,
+      description: data.description,
+      imageUrl: data.imageUrl,
+      isCritical: data.isCritical || false,
+    },
+  });
 }
 
 async function updateRoom(id, data) {
@@ -55,7 +55,10 @@ async function listDevicesInRoom(roomId) {
   });
 }
 
-async function powerRoom(roomId, action, userId) {
+async function powerRoom(roomId, action, options = {}) {
+  const { userId = null, scheduleId = null } = options;
+  const triggerType = scheduleId ? 'scheduled' : 'manual';
+
   const room = await prisma.room.findUnique({
     where: { id: roomId },
     include: { devices: { include: { gateway: true } } },
@@ -85,8 +88,9 @@ async function powerRoom(roomId, action, userId) {
         roomId: room.id,
         deviceId: device.id,
         action,
-        triggerType: 'manual',
+        triggerType,
         triggeredByUserId: userId,
+        scheduleId,
         status,
         notes,
       },
@@ -103,6 +107,11 @@ async function powerRoom(roomId, action, userId) {
 }
 
 module.exports = {
-  listRooms, getRoomById, createRoom, updateRoom, deleteRoom, listDevicesInRoom,
+  listRooms,
+  getRoomById,
+  createRoom,
+  updateRoom,
+  deleteRoom,
+  listDevicesInRoom,
   powerRoom,
 };

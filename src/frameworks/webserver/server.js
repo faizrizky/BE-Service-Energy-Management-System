@@ -10,6 +10,7 @@ const roleRoutes = require('./routes/role.routes');
 const gatewayRoutes = require('./routes/gateway.routes');
 const deviceRoutes = require('./routes/device.routes');
 const roomRoutes = require('./routes/room.routes');
+const scheduleRoutes = require('./routes/schedule.routes');
 
 function createServer() {
   const app = express();
@@ -25,6 +26,7 @@ function createServer() {
   app.use('/api/gateways', gatewayRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/rooms', roomRoutes);
+  app.use('/api/schedules', scheduleRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

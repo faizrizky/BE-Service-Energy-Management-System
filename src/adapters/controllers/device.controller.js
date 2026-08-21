@@ -53,10 +53,11 @@ async function power(req, res, next) {
     if (!['on', 'off'].includes(action)) {
       return res.status(400).json({ message: 'action harus "on" atau "off"' });
     }
-    const result = await deviceUseCase.powerDevice(req.params.id, action, req.user.id);
+    const result = await deviceUseCase.powerDevice(req.params.id, action, { userId: req.user.id });
     res.json({ data: result });
   } catch (err) {
     next(err);
   }
 }
+
 module.exports = { index, show, store, update, destroy, power };

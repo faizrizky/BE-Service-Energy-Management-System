@@ -49,7 +49,10 @@ async function deleteDevice(id) {
   return prisma.device.delete({ where: { id } });
 }
 
-async function powerDevice(deviceId, action, userId) {
+async function powerDevice(deviceId, action, options = {}) {
+  const { userId = null, scheduleId = null } = options;
+  const triggerType = scheduleId ? 'scheduled' : 'manual';
+
   const device = await prisma.device.findUnique({
     where: { id: deviceId },
     include: { gateway: true },
@@ -76,8 +79,9 @@ async function powerDevice(deviceId, action, userId) {
       roomId: device.roomId,
       deviceId: device.id,
       action,
-      triggerType: 'manual',
+      triggerType,
       triggeredByUserId: userId,
+      scheduleId,
       status,
       notes,
     },
