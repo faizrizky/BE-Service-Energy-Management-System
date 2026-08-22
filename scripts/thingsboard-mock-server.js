@@ -1,4 +1,5 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "../.env.mock") });
 const express = require("express");
 const crypto = require("crypto");
 const {

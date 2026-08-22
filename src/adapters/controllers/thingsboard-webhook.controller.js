@@ -33,8 +33,10 @@ async function handleDeviceUpdate(req, res, next) {
       return res.status(400).json({ message: "Device wajib diisi" });
     }
 
-    const relayStatus = req.body[TELEMETRY_KEYS.RELAY_STATUS]
+    const relayStatus = req.body[TELEMETRY_KEYS.RELAY_STATUS];
   } catch (err) {
     next(err);
   }
 }
+
+module.exports = { handleDeviceUpdate };
