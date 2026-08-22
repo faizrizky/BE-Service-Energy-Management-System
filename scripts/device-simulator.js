@@ -1,17 +1,20 @@
-require('dotenv').config();
-const mqtt = require('mqtt');
+/**
+ * Delete soon, sudah tidak terpakai
+ */
 
-const BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
+require("dotenv").config();
+const mqtt = require("mqtt");
+
+const BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883";
 
 /**
  * Daftar device virtual gatewayEui & deviceEui.
  */
 const SIMULATED_DEVICES = [
-  { gatewayEui: 'GW-001', deviceEui: 'DEV-001', name: 'AC Command Center' },
-  // tambahkan device lain di sini
+  { gatewayEui: "GW-001", deviceEui: "DEV-001", name: "AC Command Center" },
 ];
 
-const deviceState = {}; // status on/off + akumulasi kWh per device
+const deviceState = {};
 
 function commandTopic(gatewayEui, deviceEui) {
   return `ems/gateway/${gatewayEui}/device/${deviceEui}/command`;
@@ -31,54 +34,65 @@ function randomWatt() {
 
 const client = mqtt.connect(BROKER_URL);
 
-client.on('connect', () => {
+client.on("connect", () => {
   console.log(`[Simulator] Terhubung ke broker: ${BROKER_URL}`);
 
   SIMULATED_DEVICES.forEach(({ gatewayEui, deviceEui, name }) => {
-    deviceState[deviceEui] = { status: 'off', usageKwh: 0 };
+    deviceState[deviceEui] = { status: "off", usageKwh: 0 };
 
     const topic = commandTopic(gatewayEui, deviceEui);
     client.subscribe(topic, (err) => {
-      if (err) console.error(`[Simulator] Gagal subscribe ${topic}:`, err.message);
-      else console.log(`[Simulator] "${name}" (${deviceEui}) listening di ${topic}`);
+      if (err)
+        console.error(`[Simulator] Gagal subscribe ${topic}:`, err.message);
+      else
+        console.log(
+          `[Simulator] "${name}" (${deviceEui}) listening di ${topic}`,
+        );
     });
   });
 });
 
 // Terima command ON/OFF dari backend
-client.on('message', (topic, message) => {
+client.on("message", (topic, message) => {
   try {
     const payload = JSON.parse(message.toString());
-    const parts = topic.split('/'); // ems/gateway/{gatewayEui}/device/{deviceEui}/command
+    const parts = topic.split("/"); // ems/gateway/{gatewayEui}/device/{deviceEui}/command
     const gatewayEui = parts[2];
     const deviceEui = parts[4];
 
     const device = SIMULATED_DEVICES.find((d) => d.deviceEui === deviceEui);
     if (!device) return;
 
-    console.log(`[Simulator] Command diterima "${payload.action}" untuk ${device.name} (${deviceEui})`);
+    console.log(
+      `[Simulator] Command diterima "${payload.action}" untuk ${device.name} (${deviceEui})`,
+    );
 
-    setTimeout(() => {
-      deviceState[deviceEui].status = payload.action;
+    setTimeout(
+      () => {
+        deviceState[deviceEui].status = payload.action;
 
-      client.publish(
-        statusTopic(gatewayEui, deviceEui),
-        JSON.stringify({ status: payload.action, timestamp: new Date().toISOString() }),
-        { qos: 1 },
-      );
+        client.publish(
+          statusTopic(gatewayEui, deviceEui),
+          JSON.stringify({
+            status: payload.action,
+            timestamp: new Date().toISOString(),
+          }),
+          { qos: 1 },
+        );
 
-      console.log(`[Simulator] "${device.name}" sekarang: ${payload.action}`);
-    }, 500 + Math.random() * 1000);
+        console.log(`[Simulator] "${device.name}" sekarang: ${payload.action}`);
+      },
+      500 + Math.random() * 1000,
+    );
   } catch (err) {
-    console.error('[Simulator] Gagal proses command:', err.message);
+    console.error("[Simulator] Gagal proses command:", err.message);
   }
 });
 
-// Publish reading energi tiap 10 detik untuk device yang lagi ON,
 setInterval(() => {
   SIMULATED_DEVICES.forEach(({ gatewayEui, deviceEui, name }) => {
     const state = deviceState[deviceEui];
-    if (!state || state.status !== 'on') return;
+    if (!state || state.status !== "on") return;
 
     const powerWatt = randomWatt();
     const deltaKwh = (powerWatt * (10 / 3600)) / 1000;
@@ -94,12 +108,14 @@ setInterval(() => {
       { qos: 0 },
     );
 
-    console.log(`[Simulator] "${name}" reading: ${powerWatt}W (total ${state.usageKwh.toFixed(3)} kWh)`);
+    console.log(
+      `[Simulator] "${name}" reading: ${powerWatt}W (total ${state.usageKwh.toFixed(3)} kWh)`,
+    );
   });
 }, 10000);
 
-client.on('error', (err) => {
-  console.error('[Simulator] Connection error:', err.message);
+client.on("error", (err) => {
+  console.error("[Simulator] Connection error:", err.message);
 });
 
-console.log('[Simulator] Jalan... tekan Ctrl+C untuk berhenti.');
+console.log("[Simulator] Jalan... tekan Ctrl+C untuk berhenti.");

@@ -1,5 +1,5 @@
-const { prisma } = require('../../../frameworks/database/prismaClient');
-const { publishDeviceCommand } = require('../../../frameworks/mqtt/publisher');
+const { prisma } = require("../../../frameworks/database/prismaClient");
+const { sendRelayCommand } = require("../../../frameworks/thingsboard/client");
 
 async function listDevices(filter = {}) {
   return prisma.device.findMany({
@@ -8,7 +8,7 @@ async function listDevices(filter = {}) {
       gatewayId: filter.gatewayId || undefined,
     },
     include: { room: true, gateway: true },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
   });
 }
 
@@ -23,6 +23,7 @@ async function createDevice(data) {
   return prisma.device.create({
     data: {
       eui: data.eui,
+      tbDeviceId: data.tbDeviceId || null,
       name: data.name,
       deviceType: data.deviceType,
       intervalMinutes: data.intervalMinutes || 5,
@@ -37,6 +38,7 @@ async function updateDevice(id, data) {
     where: { id },
     data: {
       name: data.name,
+      tbDeviceId: data.tbDeviceId,
       deviceType: data.deviceType,
       intervalMinutes: data.intervalMinutes,
       roomId: data.roomId,
@@ -51,26 +53,31 @@ async function deleteDevice(id) {
 
 async function powerDevice(deviceId, action, options = {}) {
   const { userId = null, scheduleId = null } = options;
-  const triggerType = scheduleId ? 'scheduled' : 'manual';
+  const triggerType = scheduleId ? "scheduled" : "manual";
 
-  const device = await prisma.device.findUnique({
-    where: { id: deviceId },
-    include: { gateway: true },
-  });
+  const device = await prisma.device.findUnique({ where: { id: deviceId } });
 
   if (!device) {
-    const err = new Error('Device tidak ditemukan');
+    const err = new Error("Device tidak ditemukan");
     err.status = 404;
     throw err;
   }
 
-  let status = 'success';
+  if (!device.tbDeviceId) {
+    const err = new Error(
+      "Device belum terhubung ke ThingsBoard (tbDeviceId kosong)",
+    );
+    err.status = 409;
+    throw err;
+  }
+
+  let status = "success";
   let notes = null;
 
   try {
-    await publishDeviceCommand(device.gateway.eui, device.eui, action);
+    await sendRelayCommand(device.tbDeviceId, action);
   } catch (err) {
-    status = 'failed';
+    status = "failed";
     notes = err.message;
   }
 
@@ -87,8 +94,11 @@ async function powerDevice(deviceId, action, options = {}) {
     },
   });
 
-  if (status === 'success') {
-    await prisma.device.update({ where: { id: deviceId }, data: { status: action } });
+  if (status === "success") {
+    await prisma.device.update({
+      where: { id: deviceId },
+      data: { status: action },
+    });
   }
 
   return { deviceId, action, status, notes };

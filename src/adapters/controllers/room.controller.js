@@ -1,5 +1,11 @@
 const roomUseCase = require('../../application/use_cases/room/room.usecase');
 
+/**
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
+
 async function index(req, res, next) {
   try {
     const rooms = await roomUseCase.listRooms();

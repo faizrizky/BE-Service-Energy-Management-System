@@ -1,32 +1,38 @@
-const mqtt = require('mqtt');
-const { config } = require('../../config/config');
-const logger = require('../helpers/logger');
+/**
+ * Delete soon, sudah tidak terpakai
+ */
 
-let client
+const mqtt = require("mqtt");
+const { config } = require("../../config/config");
+const logger = require("../helpers/logger");
 
-function connectMqtt(){
-    client = mqtt.connect(config.mqtt.brokerUrl,{
-        username: config.mqtt.username,
-        password: config.mqtt.password
-    })
+let client;
 
-    client.on('connect', ()=> {
-        logger.info('[MQTT] Connected to broker');
-    });
+function connectMqtt() {
+  client = mqtt.connect(config.mqtt.brokerUrl, {
+    username: config.mqtt.username,
+    password: config.mqtt.password,
+  });
 
-    client.on('error', (err) => {
-        logger.error('[MQTT] Connection error:', err.message);
-    });
+  client.on("connect", () => {
+    logger.info("[MQTT] Connected to broker");
+  });
+
+  client.on("error", (err) => {
+    logger.error("[MQTT] Connection error:", err.message);
+  });
 
   return client;
 }
 
-function getClient(){
-    if (!client){
-        throw new Error('MQTT client belum diinisialisasi, panggil connectMqtt() dulu')
-    }
+function getClient() {
+  if (!client) {
+    throw new Error(
+      "MQTT client belum diinisialisasi, panggil connectMqtt() dulu",
+    );
+  }
 
-    return client
+  return client;
 }
 
 module.exports = { connectMqtt, getClient };

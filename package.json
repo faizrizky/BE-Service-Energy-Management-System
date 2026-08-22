@@ -10,8 +10,7 @@
     "start": "node src/app.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "prisma db seed",
-    "simulate": "node scripts/device-simulator.js"
+    "prisma:seed": "prisma db seed"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
@@ -22,7 +21,6 @@
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
-    "mqtt": "^5.10.1",
     "socket.io": "^4.8.0"
   },
   "devDependencies": {

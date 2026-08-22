@@ -96,6 +96,7 @@ model Gateway {
 model Device {
   id              String          @id @default(uuid())
   eui             String          @unique
+  tbDeviceId      String?         @unique
   roomId          String
   gatewayId       String
   name            String
