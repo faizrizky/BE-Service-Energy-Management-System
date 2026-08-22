@@ -51,8 +51,14 @@ if (!WEBHOOK_SECRET) {
  * supaya backend tahu device mana yang dipetakan ke simulasi mana.
  */
 const SIMULATED_DEVICES = [
-  { tbDeviceId: crypto.randomUUID(), name: "AC Command Center" },
-  { tbDeviceId: crypto.randomUUID(), name: "Lampu Ruang Server" },
+  {
+    tbDeviceId: "11111111-1111-4111-8111-111111111111",
+    name: "AC Command Center",
+  },
+  {
+    tbDeviceId: "22222222-2222-4222-8222-222222222222",
+    name: "Lampu Ruang Server",
+  },
 ];
 
 const deviceState = new Map(
