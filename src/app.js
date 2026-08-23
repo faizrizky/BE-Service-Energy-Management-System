@@ -8,6 +8,7 @@ const { initSocket } = require("./frameworks/webserver/socket");
 const { initRepeatableJob } = require("./frameworks/queue/scheduleQueue");
 const { startScheduleWorker } = require("./frameworks/queue/scheduleWorker");
 const { createServer } = require("./frameworks/webserver/server");
+const { startRetentionJob } = require("./frameworks/queue/retentionJob");
 
 async function bootstrap() {
   try {
@@ -23,6 +24,7 @@ async function bootstrap() {
 
     await initRepeatableJob();
     startScheduleWorker();
+    startRetentionJob();
 
     httpServer.listen(config.app.port, () => {
       logger.info(

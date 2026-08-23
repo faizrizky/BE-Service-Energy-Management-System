@@ -25,6 +25,10 @@ const config = {
     apiKey: process.env.TB_API_KEY,
     webhookSecret: process.env.TB_WEBHOOK_SECRET,
   },
+
+  energyRetention: {
+    days: parseInt(process.env.ENERGY_RETENTION_DAYS, 10) || 90,
+  },
 };
 
 function validateConfig() {

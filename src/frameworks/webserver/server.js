@@ -12,6 +12,8 @@ const deviceRoutes = require("./routes/device.routes");
 const roomRoutes = require("./routes/room.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
 const thingsboardRoutes = require("./routes/thingsboard.routes");
+const dashboardRoutes = require("./routes/dashboard.routes");
+const reportRoutes = require("./routes/report.routes");
 
 function createServer() {
   const app = express();
@@ -29,6 +31,8 @@ function createServer() {
   app.use("/api/rooms", roomRoutes);
   app.use("/api/schedules", scheduleRoutes);
   app.use("/api/thingsboard", thingsboardRoutes);
+  app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/reports", reportRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
