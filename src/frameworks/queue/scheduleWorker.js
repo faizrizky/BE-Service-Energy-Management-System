@@ -15,9 +15,50 @@ const connection = {
   password: config.redis.password,
 };
 
-async function executeDueSchedules() {
-  const now = new Date();
-  const currentTime = now.toTimeString().slice(0, 5);
+// Batas catch-up: kalau server baru nyala / abis downtime lama
+const MAX_CATCHUP_MINUTES = 5;
+
+// State di memory: kapan terakhir kali worker ini beneran ngecek.
+let lastCheckedAt = null;
+
+/**
+ * Bikin daftar timestamp per-menit dari (lastCheckedAt, now]
+ */
+function getMinutesToCheck(from, to) {
+  const floorToMinute = (d) => {
+    const copy = new Date(d);
+    copy.setSeconds(0, 0);
+    return copy;
+  };
+
+  const start = from ? floorToMinute(from) : floorToMinute(to);
+  const end = floorToMinute(to);
+
+  const minutes = [];
+  const cursor = new Date(start);
+
+  if (!from) {
+    return [end];
+  }
+
+  cursor.setMinutes(cursor.getMinutes() + 1);
+  while (cursor <= end) {
+    minutes.push(new Date(cursor));
+    cursor.setMinutes(cursor.getMinutes() + 1);
+  }
+
+  if (minutes.length > MAX_CATCHUP_MINUTES) {
+    logger.warn(
+      `[Scheduler] Catch-up ${minutes.length} menit ketinggalan, dipotong ke ${MAX_CATCHUP_MINUTES} menit terakhir`,
+    );
+    return minutes.slice(-MAX_CATCHUP_MINUTES);
+  }
+
+  return minutes;
+}
+
+async function processMinute(minuteDate) {
+  const currentTime = minuteDate.toTimeString().slice(0, 5);
 
   const candidates = await prisma.schedule.findMany({
     where: {
@@ -33,10 +74,12 @@ async function executeDueSchedules() {
   const dueSchedules = candidates
     .map((schedule) => ({
       schedule,
-      startTrigger: isStartDue(schedule, now),
-      endTrigger: isEndDue(schedule, now),
+      startTrigger: isStartDue(schedule, minuteDate),
+      endTrigger: isEndDue(schedule, minuteDate),
     }))
     .filter(({ startTrigger, endTrigger }) => startTrigger || endTrigger);
+
+  if (dueSchedules.length === 0) return;
 
   logger.info(
     `[Scheduler] Cek jam ${currentTime} - ${dueSchedules.length} schedule jatuh tempo`,
@@ -72,6 +115,17 @@ async function executeDueSchedules() {
       );
     }
   }
+}
+
+async function executeDueSchedules() {
+  const now = new Date();
+  const minutesToCheck = getMinutesToCheck(lastCheckedAt, now);
+
+  for (const minute of minutesToCheck) {
+    await processMinute(minute);
+  }
+
+  lastCheckedAt = now;
 }
 
 function startScheduleWorker() {
