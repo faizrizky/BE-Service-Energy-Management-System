@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.env
+.env.mock
+.env.production
+staging.env
+*.log
+.git
+.gitignore
+tests
+coverage
+scripts
+README.md
