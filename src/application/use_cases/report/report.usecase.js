@@ -28,28 +28,42 @@ function getRangeBounds(range) {
 }
 
 function parseDateStrict(value, label) {
-  if (!value) {
+  if (!value || typeof value !== "string") {
     const err = new Error(
       `Parameter '${label}' wajib diisi (format: YYYY-MM-DD)`,
     );
     err.status = 400;
     throw err;
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
     const err = new Error(
       `Parameter '${label}' harus format YYYY-MM-DD, contoh: 2026-08-01 (diterima: "${value}")`,
     );
     err.status = 400;
     throw err;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const date = new Date(year, month - 1, day);
+
+  const isRealCalendarDate =
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day;
+
+  if (!isRealCalendarDate) {
     const err = new Error(
       `Parameter '${label}' bukan tanggal yang valid: "${value}"`,
     );
     err.status = 400;
     throw err;
   }
+
   return date;
 }
 
@@ -263,4 +277,8 @@ module.exports = {
   exportEnergyReport,
   toCsv,
   pruneOldReadings,
+
+  getRangeBounds,
+  parseDateStrict,
+  MAX_EXPORT_RANGE_DAYS,
 };

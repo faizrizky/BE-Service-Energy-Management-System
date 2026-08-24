@@ -5,5 +5,9 @@
     "target": "ES2022",
     "checkJs": false
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*",
+    "tests/application/use_cases/report/report.usecase.test.js",
+    "tests/application/use_cases/schedule/schedule-time.util.test.js"
+  ]
 }

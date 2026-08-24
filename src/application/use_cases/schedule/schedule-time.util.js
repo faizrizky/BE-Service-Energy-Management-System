@@ -12,18 +12,20 @@ function invertAction(action) {
 
 function toDateOnly(date) {
   const d = new Date(date);
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-  );
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 function toDateKey(date) {
-  return toDateOnly(date).toISOString().slice(0, 10);
+  const d = toDateOnly(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function addDays(date, amount) {
   const result = toDateOnly(date);
-  result.setUTCDate(result.getUTCDate() + amount);
+  result.setDate(result.getDate() + amount);
   return result;
 }
 
@@ -71,7 +73,7 @@ function isOccurringOnDate(schedule, date) {
 
   if (schedule.repeatType === "weekly") {
     const days = Array.isArray(schedule.repeatDays) ? schedule.repeatDays : [];
-    return days.includes(day.getUTCDay());
+    return days.includes(day.getDay());
   }
 
   return false;
