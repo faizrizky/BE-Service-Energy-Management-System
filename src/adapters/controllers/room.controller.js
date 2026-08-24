@@ -1,4 +1,4 @@
-const roomUseCase = require('../../application/use_cases/room/room.usecase');
+const roomUseCase = require("../../application/use_cases/room/room.usecase");
 
 /**
  * @param {import('express').Request} req
@@ -15,10 +15,29 @@ async function index(req, res, next) {
   }
 }
 
+async function summary(req, res, next) {
+  try {
+    const { search } = req.query;
+    const rooms = await roomUseCase.listRoomsSummary({ search });
+    res.json({ data: rooms });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function stats(req, res, next) {
+  try {
+    const data = await roomUseCase.getRoomStats();
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function show(req, res, next) {
   try {
     const room = await roomUseCase.getRoomById(req.params.id);
-    if (!room) return res.status(404).json({ message: 'Room tidak ditemukan' });
+    if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
     res.json({ data: room });
   } catch (err) {
     next(err);
@@ -55,7 +74,7 @@ async function destroy(req, res, next) {
 async function devices(req, res, next) {
   try {
     const room = await roomUseCase.getRoomById(req.params.id);
-    if (!room) return res.status(404).json({ message: 'Room tidak ditemukan' });
+    if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
 
     const roomDevices = await roomUseCase.listDevicesInRoom(req.params.id);
     res.json({ data: roomDevices });
@@ -67,14 +86,26 @@ async function devices(req, res, next) {
 async function power(req, res, next) {
   try {
     const { action } = req.body;
-    if (!['on', 'off'].includes(action)) {
+    if (!["on", "off"].includes(action)) {
       return res.status(400).json({ message: 'action harus "on" atau "off"' });
     }
-    const result = await roomUseCase.powerRoom(req.params.id, action, { userId: req.user.id });
+    const result = await roomUseCase.powerRoom(req.params.id, action, {
+      userId: req.user.id,
+    });
     res.json({ data: result });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { index, show, store, update, destroy, devices, power };
+module.exports = {
+  index,
+  summary,
+  stats,
+  show,
+  store,
+  update,
+  destroy,
+  devices,
+  power,
+};

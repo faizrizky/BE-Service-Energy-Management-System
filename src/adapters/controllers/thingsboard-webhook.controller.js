@@ -32,27 +32,31 @@ async function handleDeviceUpdate(req, res, next) {
       req.body,
     );
 
-    if (!tbDeviceId || typeof tbDeviceId !== "string") {
+    if (!tbDeviceId) {
       return res.status(400).json({ message: "tbDeviceId wajib diisi" });
     }
 
     const device = await prisma.device.findUnique({ where: { tbDeviceId } });
     if (!device) {
       logger.warn(
-        `[ThingsBoard Webhook] Device dengan tbDeviceId "${tbDeviceId}" tidak ditemukan di backend`,
+        `[Webhook] tbDeviceId "${tbDeviceId}" tidak dikenal, event diabaikan`,
       );
-      return res.status(404).json({ message: "Device tidak ditemukan" });
+      return res.status(200).json({ ignored: true });
     }
 
-    let updatedDevice = device;
-    if (relayStatus === "on" || relayStatus === "off") {
-      updatedDevice = await prisma.device.update({
-        where: { id: device.id },
-        data: { status: relayStatus },
-      });
-    }
+    // Terima event apa pun dari device ini = device masih hidup, catat waktunya.
+    // Ini yang jadi dasar perhitungan online/offline, terpisah dari status relay.
+    await prisma.device.update({
+      where: { id: device.id },
+      data: {
+        lastSeenAt: new Date(),
+        ...(relayStatus && relayStatus !== device.status
+          ? { status: relayStatus }
+          : {}),
+      },
+    });
 
-    if (powerWatt !== undefined || usageKwh !== undefined) {
+    if (typeof powerWatt === "number" || typeof usageKwh === "number") {
       await prisma.energyReading.create({
         data: {
           deviceId: device.id,
@@ -64,19 +68,17 @@ async function handleDeviceUpdate(req, res, next) {
 
     try {
       getIO().emit("device:status", {
-        deviceId: updatedDevice.id,
-        eui: updatedDevice.eui,
-        roomId: updatedDevice.roomId,
-        status: updatedDevice.status,
+        deviceId: device.id,
+        eui: device.eui,
+        roomId: device.roomId,
+        status: relayStatus || device.status,
         powerWatt,
         usageKwh,
         timestamp: new Date().toISOString(),
       });
-    } catch (ioErr) {
-      logger.warn("[ThingsBoard Webhook] Gagal emit socket:", ioErr.message);
-    }
+    } catch (ioErr) {}
 
-    res.status(200).json({ message: "OK" });
+    res.status(200).json({ received: true });
   } catch (err) {
     next(err);
   }

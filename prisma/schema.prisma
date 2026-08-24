@@ -103,6 +103,7 @@ model Device {
   deviceType      String?
   intervalMinutes Int             @default(5)
   status          String          @default("off")
+  lastSeenAt      DateTime?
   room            Room            @relation(fields: [roomId], references: [id])
   gateway         Gateway         @relation(fields: [gatewayId], references: [id])
   readings        EnergyReading[]
