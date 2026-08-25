@@ -1,6 +1,15 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
-const { isDeviceOnline } = require("../device/device-status.util");
+const { deviceUseCase } = require("../device/device.usecase");
+
+const ONLINE_THRESHOLD_MULTIPLIER = 2;
+
+function isDeviceOnline(device, now) {
+  if (!device.lastSeenAt) return false;
+  const thresholdMs =
+    device.intervalMinutes * ONLINE_THRESHOLD_MULTIPLIER * 60 * 1000;
+  return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
+}
 
 function getRangeBounds(range) {
   const now = new Date();
@@ -179,7 +188,9 @@ async function getDashboardSummary() {
     }),
   ]);
 
-  const devicesOnline = devices.filter((d) => isDeviceOnline(d, now)).length;
+  const devicesOnline = devices.filter((d) =>
+    deviceUseCase.isde(d, now),
+  ).length;
   const totalKwh = todayUsage._sum.usageKwh || 0;
   const yesterdayKwh = yesterdayUsage._sum.usageKwh || 0;
   const changePercentFromYesterday =
