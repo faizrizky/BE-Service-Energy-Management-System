@@ -1,6 +1,6 @@
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
-const { RELAY_RPC_METHOD, buildRelayRpcParams } = require("./contract");
+const { RELAY_RPC_METHOD, buildRelayRpcPayload } = require("./contract");
 
 async function tbRequest(path, options = {}) {
   const url = `${config.thingsboard.baseUrl}${path}`;
@@ -48,7 +48,7 @@ async function tbRequest(path, options = {}) {
 async function sendRelayCommand(tbDeviceId, action) {
   const payload = {
     method: RELAY_RPC_METHOD,
-    params: buildRelayRpcParams(action),
+    params: buildRelayRpcPayload(action),
     timeout: 5000,
   };
 

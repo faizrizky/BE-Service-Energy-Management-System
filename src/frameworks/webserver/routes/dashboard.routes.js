@@ -12,5 +12,20 @@ router.get(
   checkPermission("dashboard", "view"),
   controller.dashboardSummary,
 );
+router.get(
+  "/energy-usage-timeline",
+  checkPermission("dashboard", "view"),
+  controller.energyUsageTimeline,
+);
+router.get(
+  "/top-risky-rooms",
+  checkPermission("dashboard", "view"),
+  controller.topRiskyRooms,
+);
+router.get(
+  "/schedules",
+  checkPermission("dashboard", "view"),
+  controller.activeSchedules,
+);
 
 module.exports = router;

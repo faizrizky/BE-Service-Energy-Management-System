@@ -54,5 +54,42 @@ async function exportEnergy(req, res, next) {
     next(err);
   }
 }
+async function energyUsageTimeline(req, res, next) {
+  try {
+    const range = req.query.range || "today";
+    const data = await reportUseCase.getEnergyUsageTimeline(range);
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
 
-module.exports = { dashboardSummary, deviceUsage, roomUsage, exportEnergy };
+async function topRiskyRooms(req, res, next) {
+  try {
+    const range = req.query.range || "today";
+    const data = await reportUseCase.getTopRiskyRooms(range);
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function activeSchedules(req, res, next) {
+  try {
+    const status = req.query.status || "active";
+    const data = await reportUseCase.getActiveSchedules(status);
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  dashboardSummary,
+  deviceUsage,
+  roomUsage,
+  exportEnergy,
+  energyUsageTimeline,
+  topRiskyRooms,
+  activeSchedules,
+};

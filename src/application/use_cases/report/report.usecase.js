@@ -1,5 +1,6 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
+const { isDeviceOnline } = require("../device/device-status.util");
 
 function getRangeBounds(range) {
   const now = new Date();
@@ -149,37 +150,212 @@ async function getRoomUsage(roomId, range) {
 }
 
 async function getDashboardSummary() {
+  const now = new Date();
+  const { start: todayStart, end: todayEnd } = getRangeBounds("today");
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
   const [
-    totalRooms,
     totalDevices,
-    activeDevices,
+    devices,
     totalGateways,
     onlineGateways,
-    activeSchedules,
+    todayUsage,
+    yesterdayUsage,
   ] = await Promise.all([
-    prisma.room.count(),
     prisma.device.count(),
-    prisma.device.count({ where: { status: "on" } }),
+    prisma.device.findMany({
+      select: { lastSeenAt: true, intervalMinutes: true },
+    }),
     prisma.gateway.count(),
     prisma.gateway.count({ where: { status: "online" } }),
-    prisma.schedule.count({ where: { status: "active" } }),
+    prisma.energyReading.aggregate({
+      where: { recordedAt: { gte: todayStart, lte: todayEnd } },
+      _sum: { usageKwh: true },
+    }),
+    prisma.energyReading.aggregate({
+      where: { recordedAt: { gte: yesterdayStart, lt: todayStart } },
+      _sum: { usageKwh: true },
+    }),
   ]);
 
-  const { start, end } = getRangeBounds("today");
-  const todayUsage = await prisma.energyReading.aggregate({
-    where: { recordedAt: { gte: start, lte: end } },
-    _sum: { usageKwh: true },
-  });
+  const devicesOnline = devices.filter((d) => isDeviceOnline(d, now)).length;
+  const totalKwh = todayUsage._sum.usageKwh || 0;
+  const yesterdayKwh = yesterdayUsage._sum.usageKwh || 0;
+  const changePercentFromYesterday =
+    yesterdayKwh > 0
+      ? Number((((totalKwh - yesterdayKwh) / yesterdayKwh) * 100).toFixed(1))
+      : 0;
 
   return {
-    totalRooms,
-    totalDevices,
-    activeDevices,
-    totalGateways,
-    onlineGateways,
-    activeSchedules,
-    todayUsageKwh: todayUsage._sum.usageKwh || 0,
+    energyUsage: {
+      totalKwh: Number(totalKwh.toFixed(2)),
+      changePercentFromYesterday,
+    },
+    gateways: {
+      total: totalGateways,
+      online: onlineGateways,
+      offline: totalGateways - onlineGateways,
+    },
+    devices: {
+      total: totalDevices,
+      online: devicesOnline,
+      offline: totalDevices - devicesOnline,
+    },
   };
+}
+
+function bucketKey(date, granularity) {
+  const d = new Date(date);
+  if (granularity === "hour")
+    return `${String(d.getHours()).padStart(2, "0")}.00`;
+  if (granularity === "day")
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function getEnergyUsageTimeline(range) {
+  const days = RANGE_DAYS[range];
+  if (!days) {
+    const err = new Error(`Parameter 'range' tidak valid: "${range}"`);
+    err.status = 400;
+    throw err;
+  }
+  const granularity =
+    range === "today" ? "hour" : range === "last_year" ? "month" : "day";
+
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+
+  const readings = await prisma.energyReading.findMany({
+    where: { recordedAt: { gte: start, lte: end } },
+    select: { recordedAt: true, usageKwh: true },
+  });
+
+  const buckets = new Map();
+  for (const r of readings) {
+    const key = bucketKey(r.recordedAt, granularity);
+    buckets.set(key, (buckets.get(key) || 0) + (r.usageKwh || 0));
+  }
+
+  const points = [...buckets.entries()]
+    .sort(([a], [b]) => (a > b ? 1 : -1))
+    .map(([hour, kwh]) => ({ hour, kwh: Number(kwh.toFixed(3)) }));
+
+  const values = points.map((p) => p.kwh);
+  return {
+    range,
+    current: values[values.length - 1] || 0,
+    peak: values.length ? Math.max(...values) : 0,
+    average: values.length
+      ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(3))
+      : 0,
+    points,
+  };
+}
+
+async function getTopRiskyRooms(range) {
+  const days = RANGE_DAYS[range];
+  if (!days) {
+    const err = new Error(`Parameter 'range' tidak valid: "${range}"`);
+    err.status = 400;
+    throw err;
+  }
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+
+  const rooms = await prisma.room.findMany({ include: { devices: true } });
+
+  const results = await Promise.all(
+    rooms.map(async (room) => {
+      if (room.devices.length === 0) return null;
+
+      const perDevice = await Promise.all(
+        room.devices.map(async (device) => {
+          const agg = await prisma.energyReading.aggregate({
+            where: {
+              deviceId: device.id,
+              recordedAt: { gte: start, lte: end },
+            },
+            _sum: { usageKwh: true },
+            _avg: { usageKwh: true },
+            _max: { usageKwh: true },
+          });
+          return {
+            name: device.name,
+            totalKwh: agg._sum.usageKwh || 0,
+            avgKwh: agg._avg.usageKwh || 0,
+            peakKwh: agg._max.usageKwh || 0,
+          };
+        }),
+      );
+
+      const totalUsageKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
+      const avgUsageKwh = perDevice.length
+        ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
+        : 0;
+      const peakUsageKwh = perDevice.reduce(
+        (max, d) => Math.max(max, d.peakKwh),
+        0,
+      );
+      const highest = perDevice.reduce(
+        (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
+        null,
+      );
+
+      return {
+        id: room.id,
+        name: room.name,
+        location: room.location,
+        highestComponent: highest?.name || "-",
+        highestComponentKwh: Number((highest?.totalKwh || 0).toFixed(3)),
+        peakUsageKwh: Number(peakUsageKwh.toFixed(3)),
+        avgUsageKwh: Number(avgUsageKwh.toFixed(3)),
+        totalUsageKwh: Number(totalUsageKwh.toFixed(3)),
+      };
+    }),
+  );
+
+  return results
+    .filter(Boolean)
+    .sort((a, b) => b.totalUsageKwh - a.totalUsageKwh)
+    .slice(0, 5);
+}
+
+async function getActiveSchedules(status) {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const where = { status: "active" };
+  if (status === "upcoming") {
+    where.repeatType = "none";
+    where.scheduledDate = { gt: todayStart };
+  } else {
+    where.OR = [
+      { repeatType: { not: "none" } },
+      { scheduledDate: { lte: todayStart } },
+    ];
+  }
+
+  const schedules = await prisma.schedule.findMany({
+    where,
+    include: { room: true, device: true },
+    orderBy: { scheduledDate: "asc" },
+    take: 20,
+  });
+
+  return schedules.map((s) => ({
+    id: s.id,
+    roomName: s.room.name,
+    roomLocation: s.room.location,
+    component: s.device?.name || "All devices",
+    deviceEui: s.device?.eui || "-",
+    startDate: s.scheduledDate,
+    time: s.endTime ? `${s.startTime} - ${s.endTime}` : s.startTime,
+    repeat: s.repeatType !== "none",
+  }));
 }
 
 const MAX_EXPORT_RANGE_DAYS = 366;
@@ -277,6 +453,9 @@ module.exports = {
   exportEnergyReport,
   toCsv,
   pruneOldReadings,
+  getEnergyUsageTimeline,
+  getTopRiskyRooms,
+  getActiveSchedules,
 
   getRangeBounds,
   parseDateStrict,
