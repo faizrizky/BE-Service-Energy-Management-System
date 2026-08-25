@@ -8,8 +8,15 @@ const roomUseCase = require("../../application/use_cases/room/room.usecase");
 
 async function index(req, res, next) {
   try {
-    const rooms = await roomUseCase.listRooms();
-    res.json({ data: rooms });
+    const { page = 1, rowsPerPage = 10, search } = req.query;
+
+    const result = await roomUseCase.listRoomsPaginated({
+      page: Number(page),
+      rowsPerPage: Number(rowsPerPage),
+      search,
+    });
+
+    res.json(result);
   } catch (err) {
     next(err);
   }
