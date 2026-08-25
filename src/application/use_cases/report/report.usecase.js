@@ -1,6 +1,5 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
-const { deviceUseCase } = require("../device/device.usecase");
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
@@ -188,9 +187,7 @@ async function getDashboardSummary() {
     }),
   ]);
 
-  const devicesOnline = devices.filter((d) =>
-    deviceUseCase.isde(d, now),
-  ).length;
+  const devicesOnline = devices.filter((d) => isDeviceOnline(d, now)).length;
   const totalKwh = todayUsage._sum.usageKwh || 0;
   const yesterdayKwh = yesterdayUsage._sum.usageKwh || 0;
   const changePercentFromYesterday =

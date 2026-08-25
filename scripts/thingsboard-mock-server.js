@@ -216,7 +216,6 @@ async function pushWebhookEvent(tbDeviceId, state) {
 // 10 detik biar gampang dites; sesuaikan lewat TB_MOCK_UPLINK_INTERVAL_MS).
 setInterval(() => {
   deviceState.forEach((state, tbDeviceId) => {
-    if (state.relayStatus !== "on") return;
     pushWebhookEvent(tbDeviceId, state).catch((err) => {
       console.error(
         `[Mock TB] Gagal kirim webhook berkala untuk "${state.name}":`,

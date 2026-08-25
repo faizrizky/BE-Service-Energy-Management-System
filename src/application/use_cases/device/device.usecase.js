@@ -48,7 +48,36 @@ async function updateDevice(id, data) {
 }
 
 async function deleteDevice(id) {
-  return prisma.device.delete({ where: { id } });
+  return prisma.$transaction(async (tx) => {
+    const device = await tx.device.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!device) {
+      const err = new Error("Device tidak ditemukan");
+      err.status = 404;
+      throw err;
+    }
+
+    await tx.energyReading.deleteMany({
+      where: { deviceId: id },
+    });
+
+    await tx.commandLog.updateMany({
+      where: { deviceId: id },
+      data: { deviceId: null },
+    });
+
+    await tx.schedule.updateMany({
+      where: { deviceId: id },
+      data: { deviceId: null },
+    });
+
+    return tx.device.delete({
+      where: { id },
+    });
+  });
 }
 
 async function powerDevice(deviceId, action, options = {}) {
