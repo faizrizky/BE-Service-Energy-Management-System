@@ -272,6 +272,65 @@ async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
   };
 }
 
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function toDateStr(date) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function toTimeStr(date) {
+  const d = new Date(date);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function buildLogDescription(log) {
+  const actionLabel = log.action === "on" ? "ON" : "OFF";
+
+  if (log.status === "failed") {
+    return `Failed to turn ${actionLabel}${log.notes ? ` (${log.notes})` : ""}`;
+  }
+  if (log.status === "gateway_offline") {
+    return `Gateway offline, could not turn ${actionLabel}`;
+  }
+  return log.triggerType === "scheduled"
+    ? `Scheduled: device turned ${actionLabel}`
+    : `Device turned ${actionLabel} manually`;
+}
+
+async function getDeviceLogs(roomId, deviceId) {
+  const device = await prisma.device.findUnique({ where: { id: deviceId } });
+
+  if (!device || device.roomId !== roomId) {
+    const err = new Error("Device tidak ditemukan di room ini");
+    err.status = 404;
+    throw err;
+  }
+
+  const logs = await prisma.commandLog.findMany({
+    where: { roomId, deviceId },
+    include: { triggeredBy: { include: { role: true } } },
+    orderBy: { executedAt: "desc" },
+  });
+
+  return logs.map((log) => ({
+    id: log.id,
+    date: toDateStr(log.executedAt),
+    time: toTimeStr(log.executedAt),
+    description: buildLogDescription(log),
+    picName:
+      log.triggerType === "scheduled"
+        ? "System"
+        : log.triggeredBy?.fullName || "-",
+    picRole:
+      log.triggerType === "scheduled"
+        ? "Scheduled Job"
+        : log.triggeredBy?.role?.name || "-",
+  }));
+}
+
 module.exports = {
   listRooms,
   listRoomsSummary,
@@ -283,4 +342,5 @@ module.exports = {
   listDevicesInRoom,
   powerRoom,
   listRoomsPaginated,
+  getDeviceLogs,
 };

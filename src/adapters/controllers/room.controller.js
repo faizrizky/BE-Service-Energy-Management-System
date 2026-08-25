@@ -97,6 +97,15 @@ async function power(req, res, next) {
     next(err);
   }
 }
+async function deviceLogs(req, res, next) {
+  try {
+    const { id: roomId, deviceId } = req.params;
+    const logs = await roomUseCase.getDeviceLogs(roomId, deviceId);
+    res.json({ data: logs });
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
   index,
@@ -108,4 +117,5 @@ module.exports = {
   destroy,
   devices,
   power,
+  deviceLogs,
 };

@@ -22,5 +22,10 @@ router.post(
   checkPermission("room", "power_control"),
   controller.power,
 );
+router.get(
+  "/:id/devices/:deviceId/logs",
+  checkPermission("room", "view"),
+  controller.deviceLogs,
+);
 
 module.exports = router;
