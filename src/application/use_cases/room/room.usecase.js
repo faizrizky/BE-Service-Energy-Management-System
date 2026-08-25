@@ -106,15 +106,20 @@ async function getRoomStats() {
   const gatewaysWithOnlineDevice = new Set(
     devices.filter((d) => onlineDeviceIds.has(d.id)).map((d) => d.gatewayId),
   );
+  const gatewaysOnline = gatewaysWithOnlineDevice.size;
 
   return {
     totalRooms,
-    totalGateways: gateways.length,
-    gatewaysOnline: gatewaysWithOnlineDevice.size,
-    gatewaysOffline: gateways.length - gatewaysWithOnlineDevice.size,
-    totalDevices: devices.length,
-    devicesOnline,
-    devicesOffline: devices.length - devicesOnline,
+    totalGateways: {
+      total: gateways.length,
+      online: gatewaysOnline,
+      offline: gateways.length - gatewaysOnline,
+    },
+    totalDevices: {
+      total: devices.length,
+      online: devicesOnline,
+      offline: devices.length - devicesOnline,
+    },
   };
 }
 

@@ -16,7 +16,7 @@ async function index(req, res, next) {
       search,
     });
 
-    res.json(result);
+    res.json({ data: result });
   } catch (err) {
     next(err);
   }
