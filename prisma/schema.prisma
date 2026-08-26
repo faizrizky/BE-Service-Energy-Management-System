@@ -7,24 +7,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id          String       @id @default(uuid())
-  fullName    String
-  username    String       @unique
-  email       String       @unique
-  passwordHash String
-  phone       String?
-  address     String?
-  avatarUrl   String?
-  roleId      String
-  role        Role         @relation(fields: [roleId], references: [id])
-  schedules   Schedule[]
-  commandLogs CommandLog[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+ model User {
+   id          String       @id @default(uuid())
+   fullName    String
+   username    String       @unique
+   email       String       @unique
+   passwordHash String
+   phone       String?
+   address     String?
+   avatarUrl   String?
+   roleId      String
+   role        Role         @relation(fields: [roleId], references: [id])
+   schedules   Schedule[]
+   commandLogs CommandLog[]
+   installedGateways Gateway[]
+   createdAt   DateTime     @default(now())
+   updatedAt   DateTime     @updatedAt
 
-  @@map("users")
-}
+   @@map("users")
+ }
 
 model Role {
   id          String           @id @default(uuid())
@@ -75,23 +76,25 @@ model Room {
   @@map("rooms")
 }
 
-model Gateway {
-  id               String    @id @default(uuid())
-  eui              String    @unique
-  name             String
-  description      String?
-  simcard          String?
-  powerSource      String?
-  modelUnit        String?
-  installationDate DateTime?
-  status           String    @default("offline")
-  lastSeenAt       DateTime?
-  devices          Device[]
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+ model Gateway {
+   id               String    @id @default(uuid())
+   eui              String    @unique
+   name             String
+   description      String?
+   simcard          String?
+   powerSource      String?
+   modelUnit        String?
+   installationDate DateTime?
+   status           String    @default("offline")
+   lastSeenAt       DateTime?
+   installedById    String?
+   installedBy      User?     @relation(fields: [installedById], references: [id])
+   devices          Device[]
+   createdAt        DateTime  @default(now())
+   updatedAt        DateTime  @updatedAt
 
-  @@map("gateways")
-}
+   @@map("gateways")
+ }
 
 model Device {
   id              String          @id @default(uuid())
@@ -149,7 +152,6 @@ model Schedule {
   @@map("schedules")
 }
 
-// Audit log - mencatat setiap eksekusi ON/OFF, baik manual maupun by schedule
 model CommandLog {
   id                String    @id @default(uuid())
   roomId            String

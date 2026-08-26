@@ -1,9 +1,18 @@
-const gatewayUseCase = require('../../application/use_cases/gateway/gateway.usecase');
+const gatewayUseCase = require("../../application/use_cases/gateway/gateway.usecase");
 
 async function index(req, res, next) {
   try {
-    const gateways = await gatewayUseCase.listGateways();
-    res.json({ data: gateways });
+    const { page = 1, rowsPerPage = 10, search } = req.query;
+
+    const result = await gatewayUseCase.listGatewaysPaginated({
+      page: Number(page),
+      rowsPerPage: Number(rowsPerPage),
+      search,
+    });
+
+    res.json({
+      ...result,
+    });
   } catch (err) {
     next(err);
   }
@@ -12,7 +21,8 @@ async function index(req, res, next) {
 async function show(req, res, next) {
   try {
     const gateway = await gatewayUseCase.getGatewayById(req.params.id);
-    if (!gateway) return res.status(404).json({ message: 'Gateway tidak ditemukan' });
+    if (!gateway)
+      return res.status(404).json({ message: "Gateway tidak ditemukan" });
     res.json({ data: gateway });
   } catch (err) {
     next(err);
