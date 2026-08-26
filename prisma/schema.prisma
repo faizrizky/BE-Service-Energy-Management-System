@@ -18,6 +18,7 @@ datasource db {
    avatarUrl   String?
    roleId      String
    role        Role         @relation(fields: [roleId], references: [id])
+   lastActiveAt DateTime?
    schedules   Schedule[]
    commandLogs CommandLog[]
    installedGateways Gateway[]

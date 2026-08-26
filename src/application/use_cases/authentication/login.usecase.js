@@ -1,7 +1,7 @@
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { prisma } = require('../../../frameworks/database/prismaClient');
-const { config } = require('../../../config/config');
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const { prisma } = require("../../../frameworks/database/prismaClient");
+const { config } = require("../../../config/config");
 
 async function login({ username, password }) {
   const user = await prisma.user.findUnique({
@@ -10,17 +10,22 @@ async function login({ username, password }) {
   });
 
   if (!user) {
-    const err = new Error('Username atau password salah');
+    const err = new Error("Username atau password salah");
     err.status = 401;
     throw err;
   }
 
   const isValid = await bcrypt.compare(password, user.passwordHash);
   if (!isValid) {
-    const err = new Error('Username atau password salah');
+    const err = new Error("Username atau password salah");
     err.status = 401;
     throw err;
   }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastActiveAt: new Date() },
+  });
 
   const token = jwt.sign(
     { id: user.id, roleId: user.roleId, roleName: user.role.name },
