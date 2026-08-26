@@ -124,10 +124,55 @@ async function getRoomStats() {
 }
 
 async function getRoomById(id) {
-  return prisma.room.findUnique({
+  const room = await prisma.room.findUnique({
     where: { id },
     include: { devices: { include: { gateway: true } } },
   });
+
+  if (!room) return null;
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const perDevice = await Promise.all(
+    room.devices.map(async (device) => {
+      const agg = await prisma.energyReading.aggregate({
+        where: { deviceId: device.id, recordedAt: { gte: since } },
+        _sum: { usageKwh: true },
+        _avg: { usageKwh: true },
+        _max: { usageKwh: true },
+      });
+      return {
+        name: device.name,
+        totalKwh: agg._sum.usageKwh || 0,
+        avgKwh: agg._avg.usageKwh || 0,
+        peakKwh: agg._max.usageKwh || 0,
+      };
+    }),
+  );
+
+  const total24hKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
+  const avg24hKwh = perDevice.length
+    ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
+    : 0;
+  const peakKwh = perDevice.reduce((max, d) => Math.max(max, d.peakKwh), 0);
+  const highest = perDevice.reduce(
+    (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
+    null,
+  );
+
+  return {
+    ...room,
+    lastUpdatedAt: room.updatedAt,
+    usage: {
+      total24hKwh: Number(total24hKwh.toFixed(2)),
+      avg24hKwh: Number(avg24hKwh.toFixed(2)),
+      peakKwh: Number(peakKwh.toFixed(2)),
+      highestComponent: {
+        name: highest?.name || "-",
+        kwh: Number((highest?.totalKwh || 0).toFixed(2)),
+      },
+    },
+  };
 }
 
 async function createRoom(data) {
@@ -164,10 +209,25 @@ async function deleteRoom(id) {
 }
 
 async function listDevicesInRoom(roomId) {
-  return prisma.device.findMany({
+  const devices = await prisma.device.findMany({
     where: { roomId },
     include: { gateway: true },
+    orderBy: { createdAt: "desc" },
   });
+
+  return Promise.all(
+    devices.map(async (device) => ({
+      id: device.id,
+      tbDeviceId: device.tbDeviceId || device.eui,
+      deviceEui: device.eui,
+      component: device.deviceType || "-",
+      totalUsage24hKwh: Number(
+        (await computeDeviceUsage24h(device.id)).toFixed(2),
+      ),
+      intervalMinutes: device.intervalMinutes,
+      isPowerOn: device.status === "on",
+    })),
+  );
 }
 
 async function powerRoom(roomId, action, options = {}) {
