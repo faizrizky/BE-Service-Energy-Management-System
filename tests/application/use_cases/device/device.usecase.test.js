@@ -12,12 +12,12 @@ jest.mock("../../../../src/frameworks/database/prismaClient", () => ({
 }));
 
 jest.mock("../../../../src/frameworks/thingsboard/client", () => ({
-  sendRelayCommand: jest.fn(),
+  sendRelayCommandConfirmed: jest.fn(),
 }));
 
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
 const {
-  sendRelayCommand,
+  sendRelayCommandConfirmed,
 } = require("../../../../src/frameworks/thingsboard/client");
 const deviceUseCase = require("../../../../src/application/use_cases/device/device.usecase");
 
@@ -54,16 +54,16 @@ describe("powerDevice", () => {
     await expect(deviceUseCase.powerDevice("d1", "on")).rejects.toThrow(
       /tbDeviceId kosong/,
     );
-    expect(sendRelayCommand).not.toHaveBeenCalled();
+    expect(sendRelayCommandConfirmed).not.toHaveBeenCalled();
   });
 
-  test("sukses: sendRelayCommand berhasil -> status success, device di-update", async () => {
+  test("sukses: sendRelayCommandConfirmed berhasil -> status success, device di-update", async () => {
     prisma.device.findUnique.mockResolvedValue({
       id: "d1",
       roomId: "r1",
       tbDeviceId: "tb-1",
     });
-    sendRelayCommand.mockResolvedValue({});
+    sendRelayCommandConfirmed.mockResolvedValue({});
     prisma.commandLog.create.mockResolvedValue({});
     prisma.device.update.mockResolvedValue({});
 
@@ -86,13 +86,15 @@ describe("powerDevice", () => {
     );
   });
 
-  test("[negative] sendRelayCommand gagal -> status failed, device TIDAK di-update, notes berisi error", async () => {
+  test("[negative] sendRelayCommandConfirmed gagal -> status failed, device TIDAK di-update, notes berisi error", async () => {
     prisma.device.findUnique.mockResolvedValue({
       id: "d1",
       roomId: "r1",
       tbDeviceId: "tb-1",
     });
-    sendRelayCommand.mockRejectedValue(new Error("Connection refused"));
+    sendRelayCommandConfirmed.mockRejectedValue(
+      new Error("Connection refused"),
+    );
     prisma.commandLog.create.mockResolvedValue({});
 
     const result = await deviceUseCase.powerDevice("d1", "on");
@@ -108,7 +110,7 @@ describe("powerDevice", () => {
       roomId: "r1",
       tbDeviceId: "tb-1",
     });
-    sendRelayCommand.mockResolvedValue({});
+    sendRelayCommandConfirmed.mockResolvedValue({});
     prisma.commandLog.create.mockResolvedValue({});
     prisma.device.update.mockResolvedValue({});
 

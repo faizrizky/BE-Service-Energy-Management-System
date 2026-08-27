@@ -1,8 +1,13 @@
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
-const { RELAY_RPC_METHOD, buildRelayRpcPayload } = require("./contract");
+const {
+  RELAY_RPC_METHOD,
+  buildRelayRpcPayload,
+  ATTRIBUTE_SCOPE,
+  DEVICE_ATTRIBUTE_KEYS,
+} = require("./contract");
 
-async function tbRequest(path, options = {}) {
+async function tbRequest(path, options = {}, timeoutMs = 10_000) {
   const url = `${config.thingsboard.baseUrl}${path}`;
 
   let response;
@@ -15,7 +20,7 @@ async function tbRequest(path, options = {}) {
         "X-Authorization": `ApiKey ${config.thingsboard.apiKey}`,
         ...options.headers,
       },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     const wrapped = new Error(
@@ -48,18 +53,87 @@ async function tbRequest(path, options = {}) {
 async function sendRelayCommand(tbDeviceId, action) {
   const payload = {
     method: RELAY_RPC_METHOD,
-    params: buildRelayRpcPayload(action),
+    params: buildRelayRpcPayload(action).params,
     timeout: 5000,
   };
-
   logger.info(
-    `[ThingsBoard] Kirim RPC ke device ${tbDeviceId}: ${JSON.stringify(payload)}`,
+    `[ThingsBoard] Kirim RPC oneway ke device ${tbDeviceId}: ${JSON.stringify(payload)}`,
   );
-
   return tbRequest(`/api/rpc/oneway/${tbDeviceId}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * RPC two-way - TB menunggu device benar-benar merespons dalam `timeoutMs`.
+ */
+async function sendRelayCommandConfirmed(tbDeviceId, action, timeoutMs = 5000) {
+  const payload = {
+    method: RELAY_RPC_METHOD,
+    params: buildRelayRpcPayload(action).params,
+    timeout: timeoutMs,
+  };
+  return tbRequest(`/api/rpc/twoway/${tbDeviceId}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function getDeviceAttributes(tbDeviceId, scope = ATTRIBUTE_SCOPE.SERVER) {
+  const keysParam = encodeURIComponent(DEVICE_ATTRIBUTE_KEYS.join(","));
+  return tbRequest(
+    `/api/plugins/telemetry/DEVICE/${tbDeviceId}/values/attributes/${scope}?keys=${keysParam}`,
+  );
+}
+
+async function setDeviceAttributes(
+  tbDeviceId,
+  attributes,
+  scope = ATTRIBUTE_SCOPE.SERVER,
+) {
+  return tbRequest(`/api/plugins/telemetry/DEVICE/${tbDeviceId}/${scope}`, {
+    method: "POST",
+    body: JSON.stringify(attributes),
+  });
+}
+
+async function getTelemetryHistory(
+  tbDeviceId,
+  keys,
+  startTs,
+  endTs,
+  limit = 1000,
+) {
+  const keysParam = encodeURIComponent(keys.join(","));
+  return tbRequest(
+    `/api/plugins/telemetry/DEVICE/${tbDeviceId}/values/timeseries` +
+      `?keys=${keysParam}&startTs=${startTs}&endTs=${endTs}&limit=${limit}&useStrictDataTypes=true`,
+  );
+}
+
+/**
+ * Dipakai buat validasi mapping tbDeviceId di form Device (bukan buat
+ * nge-mirror seluruh device TB ke Postgres).
+ */
+async function listTbDevices({ page = 0, pageSize = 50 } = {}) {
+  return tbRequest(
+    `/api/tenant/devices?pageSize=${pageSize}&page=${page}&sortProperty=name&sortOrder=ASC`,
+  );
+}
+
+async function getActiveAlarms({ pageSize = 20, page = 0 } = {}) {
+  return tbRequest(
+    `/api/alarms?pageSize=${pageSize}&page=${page}&sortProperty=createdTime&sortOrder=DESC&statusList=ACTIVE_UNACK,ACTIVE_ACK`,
+  );
+}
+
+async function ackAlarm(alarmId) {
+  return tbRequest(`/api/alarm/${alarmId}/ack`, { method: "POST" });
+}
+
+async function clearAlarm(alarmId) {
+  return tbRequest(`/api/alarm/${alarmId}/clear`, { method: "POST" });
 }
 
 /**
@@ -74,4 +148,16 @@ async function getLatestTelemetry(tbDeviceId, keys) {
   );
 }
 
-module.exports = { tbRequest, sendRelayCommand, getLatestTelemetry };
+module.exports = {
+  tbRequest,
+  sendRelayCommand,
+  sendRelayCommandConfirmed,
+  getLatestTelemetry,
+  getDeviceAttributes,
+  setDeviceAttributes,
+  getTelemetryHistory,
+  listTbDevices,
+  getActiveAlarms,
+  ackAlarm,
+  clearAlarm,
+};

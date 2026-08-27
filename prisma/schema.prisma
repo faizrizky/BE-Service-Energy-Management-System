@@ -171,3 +171,17 @@ model CommandLog {
 
   @@map("command_logs")
 }
+
+model WebhookEvent {
+  id           String   @id @default(uuid())
+  source       String 
+  eventId      String?  @unique
+  tbDeviceId   String?
+  payload      Json
+  status       String // "received" | "processed" | "ignored_unknown_device" | "invalid_secret" | "error"
+  errorMessage String?
+  receivedAt   DateTime @default(now())
+
+  @@index([tbDeviceId, receivedAt])
+  @@map("webhook_events")
+}

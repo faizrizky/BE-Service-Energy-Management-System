@@ -13,12 +13,12 @@ jest.mock("../../../../src/frameworks/database/prismaClient", () => ({
 }));
 
 jest.mock("../../../../src/frameworks/thingsboard/client", () => ({
-  sendRelayCommand: jest.fn(),
+  sendRelayCommandConfirmed: jest.fn(),
 }));
 
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
 const {
-  sendRelayCommand,
+  sendRelayCommandConfirmed,
 } = require("../../../../src/frameworks/thingsboard/client");
 const roomUseCase = require("../../../../src/application/use_cases/room/room.usecase");
 
@@ -60,7 +60,7 @@ describe("powerRoom", () => {
         { id: "d2", tbDeviceId: null },
       ],
     });
-    sendRelayCommand.mockResolvedValue({});
+    sendRelayCommandConfirmed.mockResolvedValue({});
     prisma.commandLog.create.mockResolvedValue({});
     prisma.device.update.mockResolvedValue({});
 
@@ -84,7 +84,7 @@ describe("powerRoom", () => {
     });
   });
 
-  test("[negative] sendRelayCommand throw untuk salah satu device -> tetap lanjut proses device lain", async () => {
+  test("[negative] sendRelayCommandConfirmed throw untuk salah satu device -> tetap lanjut proses device lain", async () => {
     prisma.room.findUnique.mockResolvedValue({
       id: "r1",
       devices: [
@@ -92,7 +92,7 @@ describe("powerRoom", () => {
         { id: "d2", tbDeviceId: "tb-2" },
       ],
     });
-    sendRelayCommand
+    sendRelayCommandConfirmed
       .mockRejectedValueOnce(new Error("Timeout"))
       .mockResolvedValueOnce({});
     prisma.commandLog.create.mockResolvedValue({});

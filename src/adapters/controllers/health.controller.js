@@ -39,6 +39,13 @@ async function healthCheck(req, res) {
     result.redis === "ok" &&
     result.thingsboard === "ok";
   res.status(allOk ? 200 : 503).json(result);
+
+  try {
+    await tbRequest("/api/tenant/devices?pageSize=1&page=0");
+    result.thingsboard = "ok";
+  } catch (err) {
+    result.thingsboard = `error: ${err.message}`;
+  }
 }
 
 module.exports = { healthCheck };

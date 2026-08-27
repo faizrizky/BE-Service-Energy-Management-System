@@ -1,5 +1,7 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
-const { sendRelayCommand } = require("../../../frameworks/thingsboard/client");
+const {
+  sendRelayCommandConfirmed,
+} = require("../../../frameworks/thingsboard/client");
 
 /**
  * Misal device interval 5 menit, ditoleransi sampai 10 menit tanpa lapor
@@ -256,7 +258,7 @@ async function powerRoom(roomId, action, options = {}) {
       notes = "Device belum terhubung ke ThingsBoard (tbDeviceId kosong)";
     } else {
       try {
-        await sendRelayCommand(device.tbDeviceId, action);
+        await sendRelayCommandConfirmed(device.tbDeviceId, action);
       } catch (err) {
         status = "failed";
         notes = err.message;

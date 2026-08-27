@@ -35,6 +35,8 @@ const PERMISSIONS = [
   ["role", "create"],
   ["role", "edit"],
   ["role", "delete"],
+  ["alarm", "view"],
+  ["alarm", "ack"],
 ];
 
 const ROLE_PERMISSIONS = {
@@ -58,6 +60,8 @@ const ROLE_PERMISSIONS = {
     ["report", "view"],
     ["report", "list"],
     ["report", "export"],
+    ["alarm", "view"],
+    ["alarm", "ack"],
   ],
   Komandan: [
     ["dashboard", "view"],
@@ -66,6 +70,7 @@ const ROLE_PERMISSIONS = {
     ["device", "view"],
     ["report", "view"],
     ["report", "list"],
+    ["alarm", "view"],
   ],
   Administrator: PERMISSIONS,
 };

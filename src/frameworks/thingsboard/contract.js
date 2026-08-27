@@ -1,4 +1,18 @@
+const crypto = require("crypto");
+
 const RELAY_RPC_METHOD = "setRelayState";
+
+const ATTRIBUTE_SCOPE = {
+  SERVER: "SERVER_SCOPE",
+  SHARED: "SHARED_SCOPE",
+  CLIENT: "CLIENT_SCOPE",
+};
+const DEVICE_ATTRIBUTE_KEYS = [
+  "serialNumber",
+  "firmwareVersion",
+  "meterModel",
+  "installedAt",
+];
 
 /**
  * Payload RPC one-way buat kontrol relay.
@@ -24,17 +38,34 @@ function parseRelayRpcPayload(body) {
 /**
  * Bentuk body webhook yang dikirim ThingsBoard ke endpoint
  */
-function buildWebhookBody({ tbDeviceId, relayStatus, powerWatt, usageKwh }) {
-  return { tbDeviceId, relayStatus, powerWatt, usageKwh };
+function buildWebhookBody({
+  tbDeviceId,
+  relayStatus,
+  powerWatt,
+  usageKwh,
+  eventId,
+  ts,
+}) {
+  return {
+    tbDeviceId,
+    relayStatus,
+    powerWatt,
+    usageKwh,
+    eventId: eventId || crypto.randomUUID(),
+    ts: ts || Date.now(),
+  };
 }
 
 function parseWebhookBody(body) {
-  const { tbDeviceId, relayStatus, powerWatt, usageKwh } = body || {};
-  return { tbDeviceId, relayStatus, powerWatt, usageKwh };
+  const { tbDeviceId, relayStatus, powerWatt, usageKwh, eventId, ts } =
+    body || {};
+  return { tbDeviceId, relayStatus, powerWatt, usageKwh, eventId, ts };
 }
 
 module.exports = {
   RELAY_RPC_METHOD,
+  ATTRIBUTE_SCOPE,
+  DEVICE_ATTRIBUTE_KEYS,
   buildRelayRpcPayload,
   parseRelayRpcPayload,
   buildWebhookBody,
