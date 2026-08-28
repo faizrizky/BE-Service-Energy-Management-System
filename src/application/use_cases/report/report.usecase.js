@@ -3,6 +3,13 @@ const { config } = require("../../../config/config");
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
+const RANGE_DAYS = {
+  today: 1,
+  last_week: 7,
+  last_month: 30,
+  last_year: 365,
+};
+
 function isDeviceOnline(device, now) {
   if (!device.lastSeenAt) return false;
   const thresholdMs =
