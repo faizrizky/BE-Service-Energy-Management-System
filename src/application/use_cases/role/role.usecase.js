@@ -1,8 +1,11 @@
-const { prisma } = require('../../../frameworks/database/prismaClient');
+const { prisma } = require("../../../frameworks/database/prismaClient");
 
 async function listRoles() {
   return prisma.role.findMany({
-    include: { permissions: { include: { permission: true } } },
+    include: {
+      permissions: { include: { permission: true } },
+      _count: { select: { users: true } },
+    },
   });
 }
 
@@ -52,7 +55,7 @@ async function assignPermissions(roleId, permissionIds) {
 
 async function listPermissions() {
   return prisma.permission.findMany({
-    orderBy: [{ module: 'asc' }, { action: 'asc' }],
+    orderBy: [{ module: "asc" }, { action: "asc" }],
   });
 }
 
