@@ -38,15 +38,39 @@ async function exportEnergy(req, res, next) {
       from,
       to,
     });
+    const filename = `energy-report-${from}_to_${to}`;
 
     if (format === "csv") {
       const csv = reportUseCase.toCsv(rows);
       res.setHeader("Content-Type", "text/csv");
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="energy-report-${from}_to_${to}.csv"`,
+        `attachment; filename="${filename}.csv"`,
       );
       return res.send(csv);
+    }
+
+    if (format === "xlsx") {
+      const xlsx = await reportUseCase.toXlsxBuffer(rows);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}.xlsx"`,
+      );
+      return res.send(xlsx);
+    }
+
+    if (format === "pdf") {
+      const pdf = await reportUseCase.toPdfBuffer(rows);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}.pdf"`,
+      );
+      return res.send(pdf);
     }
 
     res.json({ data: rows });

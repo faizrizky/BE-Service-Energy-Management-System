@@ -1,5 +1,7 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
+const PDFDocument = require("pdfkit");
+const ExcelJS = require("exceljs");
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
@@ -461,12 +463,91 @@ async function pruneOldReadings() {
   return { deletedCount: result.count, cutoff };
 }
 
+async function toXlsx(rows) {
+  const workbook = new ExcelJS.workbook();
+  const sheet = workbook.addWorksheet("Energy Report");
+  sheet.columns = [
+    { header: "Recorded At", key: "recordedAt", width: 24 },
+    { header: "Room", key: "roomName", width: 20 },
+    { header: "Device", key: "deviceName", width: 20 },
+    { header: "Power (W)", key: "powerWatt", width: 14 },
+    { header: "Usage (kWh)", key: "usageKwh", width: 14 },
+  ];
+  rows.forEach((r) => {
+    sheet.addRow({
+      recordedAt: r.recordedAt.toISOString(),
+      roomName: r.roomName,
+      deviceName: r.deviceName,
+      powerWatt: r.powerWatt ?? "",
+      usageKwh: r.usageKwh ?? "",
+    });
+  });
+
+  return workbook.xlsx.writeBuffer();
+}
+
+async function toPdf(rows) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      margin: 30,
+      size: "A4",
+      layout: "landscape",
+    });
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    doc.fontSize(14).text("Energy Usage Report", { align: "center" });
+    doc.moveDown();
+
+    const headers = [
+      "Recorded At",
+      "Room",
+      "Device",
+      "Power (W)",
+      "Usage (kWh)",
+    ];
+    const widths = [150, 120, 120, 90, 90];
+    const startX = doc.x;
+
+    const drawRow = (values, bold = false) => {
+      const y = doc.y;
+      if (y > 520) {
+        doc.addPage();
+      }
+      let x = startX;
+      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9);
+      values.forEach((v, i) => {
+        doc.text(String(v), x, doc.y, { width: widths[i] });
+        x += widths[i];
+      });
+      doc.moveDown(0.3);
+    };
+
+    drawRow(headers, true);
+    rows.forEach((r) =>
+      drawRow([
+        r.recordedAt.toISOString(),
+        r.roomName,
+        r.deviceName,
+        r.powerWatt ?? "-",
+        r.usageKwh ?? "-",
+      ]),
+    );
+
+    doc.end();
+  });
+}
+
 module.exports = {
   getDeviceUsage,
   getRoomUsage,
   getDashboardSummary,
   exportEnergyReport,
   toCsv,
+  toXlsx,
+  toPdf,
   pruneOldReadings,
   getEnergyUsageTimeline,
   getTopRiskyRooms,
