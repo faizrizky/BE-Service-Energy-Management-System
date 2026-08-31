@@ -46,13 +46,14 @@ function buildWebhookBody({
   eventId,
   ts,
 }) {
+  const finalTs = ts || Date.now();
   return {
     tbDeviceId,
     relayStatus,
     powerWatt,
     usageKwh,
-    eventId: eventId || crypto.randomUUID(),
-    ts: ts || Date.now(),
+    eventId: eventId || `${tbDeviceId}-${finalTs}`,
+    ts: finalTs,
   };
 }
 

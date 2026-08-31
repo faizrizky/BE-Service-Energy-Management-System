@@ -51,7 +51,7 @@ async function exportEnergy(req, res, next) {
     }
 
     if (format === "xlsx") {
-      const xlsx = await reportUseCase.toXlsxBuffer(rows);
+      const xlsx = await reportUseCase.toXlsx(rows);
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -64,7 +64,7 @@ async function exportEnergy(req, res, next) {
     }
 
     if (format === "pdf") {
-      const pdf = await reportUseCase.toPdfBuffer(rows);
+      const pdf = await reportUseCase.toPdf(rows);
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",

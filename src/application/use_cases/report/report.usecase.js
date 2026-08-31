@@ -464,7 +464,7 @@ async function pruneOldReadings() {
 }
 
 async function toXlsx(rows) {
-  const workbook = new ExcelJS.workbook();
+  const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Energy Report");
   sheet.columns = [
     { header: "Recorded At", key: "recordedAt", width: 24 },
@@ -473,16 +473,15 @@ async function toXlsx(rows) {
     { header: "Power (W)", key: "powerWatt", width: 14 },
     { header: "Usage (kWh)", key: "usageKwh", width: 14 },
   ];
-  rows.forEach((r) => {
+  rows.forEach((r) =>
     sheet.addRow({
       recordedAt: r.recordedAt.toISOString(),
       roomName: r.roomName,
       deviceName: r.deviceName,
       powerWatt: r.powerWatt ?? "",
       usageKwh: r.usageKwh ?? "",
-    });
-  });
-
+    }),
+  );
   return workbook.xlsx.writeBuffer();
 }
 
