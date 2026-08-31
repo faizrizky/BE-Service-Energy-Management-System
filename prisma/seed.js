@@ -6,31 +6,38 @@ const prisma = new PrismaClient();
 // Daftar module & action
 const PERMISSIONS = [
   ["dashboard", "view"],
+
   ["schedule", "view"],
   ["schedule", "create"],
   ["schedule", "edit"],
   ["schedule", "delete"],
+
   ["room", "view"],
   ["room", "create"],
   ["room", "edit"],
   ["room", "delete"],
   ["room", "power_control"],
+
   ["device", "view"],
   ["device", "create"],
   ["device", "edit"],
   ["device", "delete"],
   ["device", "power_control"],
+
   ["gateway", "view"],
   ["gateway", "create"],
   ["gateway", "edit"],
   ["gateway", "delete"],
+
   ["report", "view"],
   ["report", "list"],
   ["report", "export"],
+
   ["user", "view"],
   ["user", "create"],
   ["user", "edit"],
   ["user", "delete"],
+
   ["role", "view"],
   ["role", "create"],
   ["role", "edit"],
@@ -41,36 +48,52 @@ const PERMISSIONS = [
 
 const ROLE_PERMISSIONS = {
   "PJ Gedung": [
+    // Energy monitoring
     ["dashboard", "view"],
+
+    // Schedule
     ["schedule", "view"],
-    ["schedule", "create"],
-    ["schedule", "edit"],
-    ["schedule", "delete"],
+
+    // Room
     ["room", "view"],
     ["room", "power_control"],
+
+    // Device
     ["device", "view"],
     ["device", "create"],
     ["device", "edit"],
     ["device", "delete"],
     ["device", "power_control"],
+
+    // Gateway
     ["gateway", "view"],
     ["gateway", "create"],
     ["gateway", "edit"],
     ["gateway", "delete"],
+
+    // Report
     ["report", "view"],
-    ["report", "list"],
-    ["report", "export"],
+
+    // Alarm
     ["alarm", "view"],
     ["alarm", "ack"],
   ],
   Komandan: [
+    // Energy monitoring
     ["dashboard", "view"],
+
+    // Schedule
     ["schedule", "view"],
+
+    // Room
     ["room", "view"],
+
+    // Device
     ["device", "view"],
+
+    // Report
     ["report", "view"],
     ["report", "list"],
-    ["alarm", "view"],
   ],
   Administrator: PERMISSIONS,
 };
