@@ -1,10 +1,15 @@
-const scheduleUseCase = require('../../application/use_cases/schedule/schedule.usecase');
+const scheduleUseCase = require("../../application/use_cases/schedule/schedule.usecase");
 
 async function index(req, res, next) {
   try {
-    const { roomId } = req.query;
-    const schedules = await scheduleUseCase.listSchedules({ roomId });
-    res.json({ data: schedules });
+    const { roomId, page = 1, rowsPerPage = 10, search } = req.query;
+    const result = await scheduleUseCase.listSchedulesPaginated({
+      roomId,
+      page: Number(page),
+      rowsPerPage: Number(rowsPerPage),
+      search,
+    });
+    res.json({ data: result });
   } catch (err) {
     next(err);
   }
@@ -13,7 +18,8 @@ async function index(req, res, next) {
 async function show(req, res, next) {
   try {
     const schedule = await scheduleUseCase.getScheduleById(req.params.id);
-    if (!schedule) return res.status(404).json({ message: 'Schedule tidak ditemukan' });
+    if (!schedule)
+      return res.status(404).json({ message: "Schedule tidak ditemukan" });
     res.json({ data: schedule });
   } catch (err) {
     next(err);
@@ -22,7 +28,10 @@ async function show(req, res, next) {
 
 async function store(req, res, next) {
   try {
-    const schedule = await scheduleUseCase.createSchedule(req.body, req.user.id);
+    const schedule = await scheduleUseCase.createSchedule(
+      req.body,
+      req.user.id,
+    );
     res.status(201).json({ data: schedule });
   } catch (err) {
     next(err);
@@ -31,7 +40,10 @@ async function store(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const schedule = await scheduleUseCase.updateSchedule(req.params.id, req.body);
+    const schedule = await scheduleUseCase.updateSchedule(
+      req.params.id,
+      req.body,
+    );
     res.json({ data: schedule });
   } catch (err) {
     next(err);

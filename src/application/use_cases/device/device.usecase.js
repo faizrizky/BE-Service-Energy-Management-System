@@ -8,6 +8,41 @@ const {
 
 const MAX_HISTORY_RANGE_DAYS = 90;
 
+async function listDevicesPaginated({
+  page = 1,
+  rowsPerPage = 10,
+  search,
+} = {}) {
+  const where = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { roomId: { contains: search, mode: "insensitive" } },
+          { gatewayId: { contains: search, mode: "insensitive" } },
+        ],
+      }
+    : undefined;
+
+  const [totalRows, devices] = await Promise.all([
+    prisma.device.count({ where }),
+    prisma.device.findMany({
+      where,
+      include: { room: true, gateway: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * rowsPerPage,
+      take: rowsPerPage,
+    }),
+  ]);
+
+  return {
+    data: devices,
+    page,
+    rowsPerPage,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+  };
+}
+
 async function listDevices(filter = {}) {
   return prisma.device.findMany({
     where: {
@@ -249,6 +284,7 @@ async function listTbDeviceCandidates({ page = 0, pageSize = 50 } = {}) {
 }
 
 module.exports = {
+  listDevicesPaginated,
   listDevices,
   getDeviceById,
   createDevice,

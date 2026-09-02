@@ -3,7 +3,10 @@ const deviceUseCase = require("../../application/use_cases/device/device.usecase
 async function index(req, res, next) {
   try {
     const { roomId, gatewayId } = req.query;
-    const devices = await deviceUseCase.listDevices({ roomId, gatewayId });
+    const devices = await deviceUseCase.listDevicesPaginated({
+      roomId,
+      gatewayId,
+    });
     res.json({ data: devices });
   } catch (err) {
     next(err);

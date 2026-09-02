@@ -290,7 +290,7 @@ async function powerRoom(roomId, action, options = {}) {
 
   return { roomId, action, results };
 }
-
+// tambahin search gateway
 async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
   const where = search
     ? { name: { contains: search, mode: "insensitive" } }

@@ -4,6 +4,50 @@ const {
   occurrenceDatesOverlap,
 } = require("./schedule-time.util");
 
+async function listSchedulesPaginated(filter = {}) {
+  const { roomId, page = 1, rowsPerPage = 10, search } = filter;
+
+  const where = {
+    roomId: roomId || undefined,
+    ...(search
+      ? {
+          OR: [
+            { room: { name: { contains: search, mode: "insensitive" } } },
+            { device: { name: { contains: search, mode: "insensitive" } } },
+            { device: { eui: { contains: search, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [totalRows, schedules] = await Promise.all([
+    prisma.schedule.count({ where }),
+    prisma.schedule.findMany({
+      where,
+      include: { room: true, device: true, createdBy: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * rowsPerPage,
+      take: rowsPerPage,
+    }),
+  ]);
+
+  return {
+    data: schedules,
+    page: Number(page),
+    rowsPerPage: Number(rowsPerPage),
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+  };
+}
+
+async function listSchedules(filter = {}) {
+  return prisma.schedule.findMany({
+    where: { roomId: filter.roomId || undefined },
+    include: { room: true, device: true, createdBy: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 function scopeOverlap(a, b) {
   if (a.roomId !== b.roomId) return false;
   if (!a.deviceId || !b.deviceId) return true;
@@ -50,14 +94,6 @@ async function assertNoScheduleConflict(data, excludeId = null) {
     err.status = 409;
     throw err;
   }
-}
-
-async function listSchedules(filter = {}) {
-  return prisma.schedule.findMany({
-    where: { roomId: filter.roomId || undefined },
-    include: { room: true, device: true, createdBy: true },
-    orderBy: { createdAt: "desc" },
-  });
 }
 
 async function getScheduleById(id) {
@@ -133,6 +169,7 @@ async function deleteSchedule(id) {
 }
 
 module.exports = {
+  listSchedulesPaginated,
   listSchedules,
   getScheduleById,
   createSchedule,
