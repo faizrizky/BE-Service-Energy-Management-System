@@ -3,6 +3,72 @@ const {
   sendRelayCommandConfirmed,
 } = require("../../../frameworks/thingsboard/client");
 
+// tambahin search gateway
+async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
+  const where = {
+    ...(search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            {
+              devices: {
+                some: {
+                  gatewayId: {
+                    contains: search,
+                    mode: "insensitive",
+                  },
+                },
+              },
+            },
+            { location: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+
+  const [totalRows, rooms] = await Promise.all([
+    prisma.room.count({ where }),
+    prisma.room.findMany({
+      where,
+      include: { devices: { include: { gateway: true } } },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * rowsPerPage,
+      take: rowsPerPage,
+    }),
+  ]);
+
+  const now = new Date();
+  const data = await Promise.all(
+    rooms.map(async (room) => {
+      const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
+      const usagePerDevice = await Promise.all(
+        room.devices.map((d) => computeDeviceUsage24h(d.id)),
+      );
+      return {
+        id: room.id,
+        name: room.name,
+        location: room.location,
+        gatewayId: room.devices[0]?.gatewayId ?? null,
+        devicesOnline: onlineDevices.length,
+        devicesOffline: room.devices.length - onlineDevices.length,
+        totalUsage24hKwh: Number(
+          usagePerDevice.reduce((s, v) => s + v, 0).toFixed(2),
+        ),
+        isPowerOn: room.devices.some((d) => d.status === "on"),
+        isCritical: room.isCritical,
+      };
+    }),
+  );
+
+  return {
+    data,
+    page,
+    rowsPerPage,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+  };
+}
+
 /**
  * Misal device interval 5 menit, ditoleransi sampai 10 menit tanpa lapor
  */
@@ -37,13 +103,6 @@ async function computeDeviceUsage24h(deviceId) {
   )
     return 0;
   return Math.max(0, latest.usageKwh - earliest.usageKwh);
-}
-
-async function listRooms() {
-  return prisma.room.findMany({
-    include: { devices: true },
-    orderBy: { createdAt: "desc" },
-  });
 }
 
 async function listRoomsSummary(filter = {}) {
@@ -290,54 +349,6 @@ async function powerRoom(roomId, action, options = {}) {
 
   return { roomId, action, results };
 }
-// tambahin search gateway
-async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
-  const where = search
-    ? { name: { contains: search, mode: "insensitive" } }
-    : undefined;
-
-  const [totalRows, rooms] = await Promise.all([
-    prisma.room.count({ where }),
-    prisma.room.findMany({
-      where,
-      include: { devices: { include: { gateway: true } } },
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * rowsPerPage,
-      take: rowsPerPage,
-    }),
-  ]);
-
-  const now = new Date();
-  const data = await Promise.all(
-    rooms.map(async (room) => {
-      const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
-      const usagePerDevice = await Promise.all(
-        room.devices.map((d) => computeDeviceUsage24h(d.id)),
-      );
-      return {
-        id: room.id,
-        name: room.name,
-        location: room.location,
-        gatewayId: room.devices[0]?.gatewayId ?? null,
-        devicesOnline: onlineDevices.length,
-        devicesOffline: room.devices.length - onlineDevices.length,
-        totalUsage24hKwh: Number(
-          usagePerDevice.reduce((s, v) => s + v, 0).toFixed(2),
-        ),
-        isPowerOn: room.devices.some((d) => d.status === "on"),
-        isCritical: room.isCritical,
-      };
-    }),
-  );
-
-  return {
-    data,
-    page,
-    rowsPerPage,
-    totalRows,
-    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
-  };
-}
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -399,7 +410,7 @@ async function getDeviceLogs(roomId, deviceId) {
 }
 
 module.exports = {
-  listRooms,
+  listRoomsPaginated,
   listRoomsSummary,
   getRoomStats,
   getRoomById,
@@ -408,6 +419,5 @@ module.exports = {
   deleteRoom,
   listDevicesInRoom,
   powerRoom,
-  listRoomsPaginated,
   getDeviceLogs,
 };

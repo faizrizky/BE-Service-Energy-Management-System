@@ -12,16 +12,27 @@ async function listDevicesPaginated({
   page = 1,
   rowsPerPage = 10,
   search,
+  gatewayId,
+  roomId,
 } = {}) {
-  const where = search
-    ? {
-        OR: [
-          { name: { contains: search, mode: "insensitive" } },
-          { roomId: { contains: search, mode: "insensitive" } },
-          { gatewayId: { contains: search, mode: "insensitive" } },
-        ],
-      }
-    : undefined;
+  const where = {
+    ...(roomId ? { roomId } : {}),
+    ...(gatewayId ? { gatewayId } : {}),
+    ...(search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { roomId: { contains: search, mode: "insensitive" } },
+            { gatewayId: { contains: search, mode: "insensitive" } },
+            { eui: { contains: search, mode: "insensitive" } },
+            { deviceType: { contains: search, mode: "insensitive" } },
+            { room: { name: { contains: search, mode: "insensitive" } } },
+            { gateway: { name: { contains: search, mode: "insensitive" } } },
+            { tbDeviceId: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
 
   const [totalRows, devices] = await Promise.all([
     prisma.device.count({ where }),
@@ -41,17 +52,6 @@ async function listDevicesPaginated({
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
-}
-
-async function listDevices(filter = {}) {
-  return prisma.device.findMany({
-    where: {
-      roomId: filter.roomId || undefined,
-      gatewayId: filter.gatewayId || undefined,
-    },
-    include: { room: true, gateway: true },
-    orderBy: { createdAt: "desc" },
-  });
 }
 
 async function getDeviceById(id) {
@@ -285,7 +285,6 @@ async function listTbDeviceCandidates({ page = 0, pageSize = 50 } = {}) {
 
 module.exports = {
   listDevicesPaginated,
-  listDevices,
   getDeviceById,
   createDevice,
   updateDevice,

@@ -4,17 +4,27 @@ const {
   occurrenceDatesOverlap,
 } = require("./schedule-time.util");
 
+const SAFE_USER_SELECT = {
+  id: true,
+  fullName: true,
+  username: true,
+  email: true,
+};
+
 async function listSchedulesPaginated(filter = {}) {
   const { roomId, page = 1, rowsPerPage = 10, search } = filter;
 
   const where = {
-    roomId: roomId || undefined,
+    ...(roomId ? { roomId } : {}),
     ...(search
       ? {
           OR: [
             { room: { name: { contains: search, mode: "insensitive" } } },
             { device: { name: { contains: search, mode: "insensitive" } } },
             { device: { eui: { contains: search, mode: "insensitive" } } },
+            {
+              device: { deviceType: { contains: search, mode: "insensitive" } },
+            },
           ],
         }
       : {}),
@@ -24,7 +34,11 @@ async function listSchedulesPaginated(filter = {}) {
     prisma.schedule.count({ where }),
     prisma.schedule.findMany({
       where,
-      include: { room: true, device: true, createdBy: true },
+      include: {
+        room: true,
+        device: true,
+        createdBy: { select: SAFE_USER_SELECT },
+      },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * rowsPerPage,
       take: rowsPerPage,
@@ -38,14 +52,6 @@ async function listSchedulesPaginated(filter = {}) {
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
-}
-
-async function listSchedules(filter = {}) {
-  return prisma.schedule.findMany({
-    where: { roomId: filter.roomId || undefined },
-    include: { room: true, device: true, createdBy: true },
-    orderBy: { createdAt: "desc" },
-  });
 }
 
 function scopeOverlap(a, b) {
@@ -99,7 +105,11 @@ async function assertNoScheduleConflict(data, excludeId = null) {
 async function getScheduleById(id) {
   return prisma.schedule.findUnique({
     where: { id },
-    include: { room: true, device: true, createdBy: true },
+    include: {
+      room: true,
+      device: true,
+      createdBy: { select: SAFE_USER_SELECT },
+    },
   });
 }
 
@@ -170,7 +180,6 @@ async function deleteSchedule(id) {
 
 module.exports = {
   listSchedulesPaginated,
-  listSchedules,
   getScheduleById,
   createSchedule,
   updateSchedule,

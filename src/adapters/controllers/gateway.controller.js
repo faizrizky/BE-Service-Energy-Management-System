@@ -5,9 +5,9 @@ async function index(req, res, next) {
     const { page = 1, rowsPerPage = 10, search } = req.query;
 
     const result = await gatewayUseCase.listGatewaysPaginated({
+      search,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
-      search,
     });
 
     res.json({ data: result });

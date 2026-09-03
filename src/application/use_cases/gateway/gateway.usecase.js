@@ -10,6 +10,9 @@ async function listGatewaysPaginated({
         OR: [
           { name: { contains: search, mode: "insensitive" } },
           { eui: { contains: search, mode: "insensitive" } },
+          { modelUnit: { contains: search, mode: "insensitive" } },
+          { simcard: { contains: search, mode: "insensitive" } },
+          { powerSource: { contains: search, mode: "insensitive" } },
         ],
       }
     : undefined;

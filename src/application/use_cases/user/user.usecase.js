@@ -10,6 +10,55 @@ function sanitizeUser(user) {
   };
 }
 
+async function listUsersPaginated({
+  page = 1,
+  rowsPerPage = 10,
+  search,
+  roleId,
+} = {}) {
+  const where = {
+    ...(roleId ? { roleId } : {}),
+    ...(search
+      ? {
+          OR: [
+            {
+              fullName: {
+                contains: search,
+                mode: "insensitive",
+              },
+            },
+            {
+              address: {
+                contains: search,
+                mode: "insensitive",
+              },
+            },
+            { role: { name: { contains: search, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [totalRows, users] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      include: { role: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * rowsPerPage,
+      take: rowsPerPage,
+    }),
+  ]);
+
+  return {
+    data: users.map(sanitizeUser),
+    page,
+    rowsPerPage,
+    totalRows,
+    totalPage: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+  };
+}
+
 async function listUsers() {
   const users = await prisma.user.findMany({
     include: { role: true },
@@ -77,7 +126,7 @@ async function updateProfile(id, data) {
 }
 
 module.exports = {
-  listUsers,
+  listUsersPaginated,
   getUserById,
   createUser,
   updateUser,
