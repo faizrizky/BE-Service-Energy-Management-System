@@ -11,12 +11,27 @@ async function index(req, res, next) {
     const { page = 1, rowsPerPage = 10, search } = req.query;
 
     const result = await roomUseCase.listRoomsPaginated({
+      search,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
-      search,
     });
 
     res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function show(req, res, next) {
+  try {
+    const { page = 1, rowsPerPage = 10, search } = req.query;
+    const room = await roomUseCase.getRoomById(req.params.id, {
+      search,
+      page: Number(page),
+      rowsPerPage: Number(rowsPerPage),
+    });
+    if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
+    res.json({ data: room });
   } catch (err) {
     next(err);
   }
@@ -36,16 +51,6 @@ async function stats(req, res, next) {
   try {
     const data = await roomUseCase.getRoomStats();
     res.json({ data });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function show(req, res, next) {
-  try {
-    const room = await roomUseCase.getRoomById(req.params.id);
-    if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
-    res.json({ data: room });
   } catch (err) {
     next(err);
   }
