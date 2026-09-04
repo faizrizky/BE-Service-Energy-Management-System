@@ -19,6 +19,8 @@ datasource db {
    roleId      String
    role        Role         @relation(fields: [roleId], references: [id])
    lastActiveAt DateTime?
+   failedLoginCount Int @default(0)
+   lockedUntil DateTime?
    schedules   Schedule[]
    commandLogs CommandLog[]
    installedGateways Gateway[]
@@ -198,4 +200,18 @@ model WebhookEvent {
 
   @@index([tbDeviceId, receivedAt])
   @@map("webhook_events")
+}
+
+model SecurityEvent {
+  id        String   @id @default(uuid())
+  type      String   // "login_failed" | "login_locked" | "rbac_denied" | "rate_limited" | "invalid_refresh_token"
+  username  String?
+  userId    String?
+  ip        String?
+  userAgent String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@map("security_events")
 }

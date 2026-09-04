@@ -25,7 +25,7 @@ async function loginController(req, res, next) {
         .status(400)
         .json({ message: "username dan password wajib diisi" });
     }
-    const result = await login({ username, password });
+    const result = await login({ username, password }, req);
     res.json({ data: result });
   } catch (err) {
     next(err);

@@ -6,6 +6,7 @@ const {
   hashToken,
   generateRawToken,
 } = require("../../../frameworks/helpers/tokenHash");
+const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 
 function signAccessToken(user) {
   return jwt.sign(
@@ -28,28 +29,87 @@ async function issueRefreshToken(userId) {
   return rawToken;
 }
 
-async function login({ username, password }) {
+async function login({ username, password }, req) {
+  const { maxFailedAttempts, lockoutMinutes } = config.loginSecurity;
+
   const user = await prisma.user.findUnique({
     where: { username },
     include: { role: true },
   });
 
-  if (!user) {
+  const genericErr = () => {
     const err = new Error("Username atau password salah");
     err.status = 401;
+    throw err;
+  };
+
+  if (!user) {
+    await logSecurityEvent({
+      type: "LOGIN_FAILED",
+      username,
+      req,
+      detail: "Username tidak ditemukan",
+    });
+    throw genericErr();
+  }
+
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    await logSecurityEvent({
+      type: "LOGIN_BLOCKED",
+      username: user.username,
+      userId: user.id,
+      req,
+      detail: `Akun terkunci sampai ${user.lockedUntil.toISOString()}`,
+    });
+
+    const err = new Error(
+      `Akun terkunci. Silakan coba lagi setelah ${user.lockedUntil.toLocaleString()}`,
+    );
+    err.status = 423;
     throw err;
   }
 
   const isValid = await bcrypt.compare(password, user.passwordHash);
+
   if (!isValid) {
-    const err = new Error("Username atau password salah");
-    err.status = 401;
-    throw err;
+    const nextCount = user.failedLoginCount + 1;
+    const locked = nextCount >= maxFailedAttempts;
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginCount: nextCount,
+        lockedUntil:
+          nextCount >= maxFailedAttempts
+            ? new Date(Date.now() + lockoutMinutes * 60 * 1000)
+            : undefined,
+      },
+    });
+
+    await logSecurityEvent({
+      type: locked ? "LOGIN_LOCKED" : "LOGIN_FAILED",
+      username: user.username,
+      userId: user.id,
+      req,
+      detail: locked
+        ? `Gagal login ${nextCount} kali. Akun dikunci ${lockoutMinutes} menit`
+        : `Password salah. Percobaan ke-${nextCount}`,
+    });
+
+    throw genericErr();
   }
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { lastActiveAt: new Date() },
+    data: { lastActiveAt: new Date(), failedLoginCount: 0, lockedUntil: null },
+  });
+
+  await logSecurityEvent({
+    type: "LOGIN_SUCCESS",
+    username: user.username,
+    userId: user.id,
+    req,
+    detail: "Login berhasil",
   });
 
   const [accessToken, refreshToken] = await Promise.all([

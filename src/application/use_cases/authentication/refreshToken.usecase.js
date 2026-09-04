@@ -1,6 +1,7 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { hashToken } = require("../../../frameworks/helpers/tokenHash");
 const { signAccessToken, issueRefreshToken } = require("./login.usecase");
+const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 
 async function refreshAccessToken(rawRefreshToken) {
   const tokenHash = hashToken(rawRefreshToken);
@@ -12,7 +13,18 @@ async function refreshAccessToken(rawRefreshToken) {
 
   const isValid = !record || record.revokedAt || record.expiresAt < new Date();
 
-  if (isValid) {
+  if (!isValid) {
+    await logSecurityEvent({
+      type: "REFRESH_TOKEN_FAILED",
+      userId: record?.userId,
+      req,
+      detail: !record
+        ? "Refresh token tidak ditemukan"
+        : record.revokedAt
+          ? "Refresh token sudah dicabut"
+          : "Refresh token sudah kadaluarsa",
+    });
+
     const err = new Error("Refresh token tidak valid atau sudah kadaluarsa");
     err.status = 401;
     throw err;
@@ -27,6 +39,14 @@ async function refreshAccessToken(rawRefreshToken) {
     signAccessToken(record.user),
     issueRefreshToken(record.userId),
   ]);
+
+  await logSecurityEvent({
+    type: "REFRESH_TOKEN_SUCCESS",
+    userId: record.userId,
+    username: record.user.username,
+    req,
+    detail: "Access token berhasil diperbarui",
+  });
 
   return { accessToken, refreshToken: newRefreshToken };
 }

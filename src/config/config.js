@@ -47,6 +47,15 @@ const config = {
     authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 10,
     powerMax: parseInt(process.env.RATE_LIMIT_POWER_MAX, 10) || 20,
   },
+
+  turnstile: {
+    secretKey: process.env.TURNSTILE_SECRET_KEY,
+    enabled: Boolean(process.env.TURNSTILE_SECRET_KEY),
+  },
+  loginSecurity: {
+    maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 5,
+    lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10) || 15,
+  },
 };
 
 function validateConfig() {

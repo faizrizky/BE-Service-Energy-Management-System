@@ -3,6 +3,7 @@ const { z } = require("zod");
 const loginSchema = z.object({
   username: z.string().min(1, "Username wajib diisi").max(100),
   username: z.string().min(1, "Password wajib diisi").max(100),
+  captchaToken: z.string().min(1, "Verifikasi captcha wajib diisi"),
 });
 
 const refreshSchema = z.object({

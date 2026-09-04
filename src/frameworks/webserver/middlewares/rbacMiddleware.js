@@ -1,4 +1,5 @@
-const { prisma } = require('../../database/prismaClient');
+const { prisma } = require("../../database/prismaClient");
+const { logSecurityEvent } = require("../../helpers/securityLog");
 
 function checkPermission(module, action) {
   return async (req, res, next) => {
@@ -6,7 +7,16 @@ function checkPermission(module, action) {
       const roleId = req.user?.roleId;
 
       if (!roleId) {
-        return res.status(403).json({ message: 'Role tidak ditemukan pada token' });
+        await logSecurityEvent({
+          type: "PERMISSION_DENIED",
+          userId: req.user?.id,
+          req,
+          detail: `Role tidak ditemukan saat mengakses ${module}.${action}`,
+        });
+
+        return res
+          .status(403)
+          .json({ message: "Role tidak ditemukan pada token" });
       }
 
       const permission = await prisma.rolePermission.findFirst({
@@ -17,6 +27,13 @@ function checkPermission(module, action) {
       });
 
       if (!permission) {
+        await logSecurityEvent({
+          type: "PERMISSION_DENIED",
+          userId: req.user?.id,
+          req,
+          detail: `Akses ditolak untuk ${module}.${action}`,
+        });
+
         return res.status(403).json({
           message: `Akses ditolak: role kamu tidak punya izin ${module}.${action}`,
         });
