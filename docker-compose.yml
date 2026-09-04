@@ -43,8 +43,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      PORT: 4000
       NODE_ENV: production
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       DATABASE_URL: postgresql://${POSTGRES_USER:-ems_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ems_db}
       REDIS_HOST: redis
       REDIS_PORT: 6379

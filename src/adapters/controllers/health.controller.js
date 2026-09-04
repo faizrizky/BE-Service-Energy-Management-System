@@ -2,9 +2,12 @@ const { prisma } = require("../../frameworks/database/prismaClient");
 const { getRedisClient } = require("../../frameworks/tools/redisClient");
 const { tbRequest } = require("../../frameworks/thingsboard/client");
 
-/**
- * Health check - cek app, database, redis, dan konektivitas ThingsBoard.
- */
+const isProd = process.env.NODE_ENV === "production";
+
+function formatError(err) {
+  return isProd ? "error" : `error: ${err.message}`;
+}
+
 async function healthCheck(req, res) {
   const result = {
     app: "ok",
@@ -17,21 +20,21 @@ async function healthCheck(req, res) {
     await prisma.$queryRaw`SELECT 1`;
     result.database = "ok";
   } catch (err) {
-    result.database = `error: ${err.message}`;
+    result.database = formatError(err);
   }
 
   try {
     const pong = await getRedisClient().ping();
     result.redis = pong === "PONG" ? "ok" : "unexpected response";
   } catch (err) {
-    result.redis = `error: ${err.message}`;
+    result.redis = formatError(err);
   }
 
   try {
     await tbRequest("/api/auth/user");
     result.thingsboard = "ok";
   } catch (err) {
-    result.thingsboard = `error: ${err.message}`;
+    result.thingsboard = formatError(err);
   }
 
   const allOk =
@@ -39,13 +42,6 @@ async function healthCheck(req, res) {
     result.redis === "ok" &&
     result.thingsboard === "ok";
   res.status(allOk ? 200 : 503).json(result);
-
-  try {
-    await tbRequest("/api/tenant/devices?pageSize=1&page=0");
-    result.thingsboard = "ok";
-  } catch (err) {
-    result.thingsboard = `error: ${err.message}`;
-  }
 }
 
 module.exports = { healthCheck };

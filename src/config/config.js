@@ -1,3 +1,5 @@
+const { rateLimit } = require("express-rate-limit");
+
 require("dotenv").config();
 
 /**
@@ -7,6 +9,7 @@ const config = {
   app: {
     port: parseInt(process.env.PORT, 10) || 4000,
     env: process.env.NODE_ENV || "development",
+    forceHttps: process.env.FORCE_HTTPS === "true",
   },
   database: {
     url: process.env.DATABASE_URL,
@@ -18,7 +21,8 @@ const config = {
   },
   jwt: {
     secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+    expiresIn: process.env.JWT_EXPIRES_IN || "1h",
+    refreshExpiresDays: parseInt(process.env.JWT_REFRESH_EXPIRES_DAYS, 10) || 7,
   },
   thingsboard: {
     baseUrl: process.env.TB_URL,
@@ -28,6 +32,20 @@ const config = {
 
   energyRetention: {
     days: parseInt(process.env.ENERGY_RETENTION_DAYS, 10) || 90,
+  },
+
+  cors: {
+    allowedOrigins: (process.env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
+  },
+
+  rateLimit: {
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
+    max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 300,
+    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 10,
+    powerMax: parseInt(process.env.RATE_LIMIT_POWER_MAX, 10) || 20,
   },
 };
 

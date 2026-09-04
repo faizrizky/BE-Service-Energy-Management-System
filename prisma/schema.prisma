@@ -22,11 +22,25 @@ datasource db {
    schedules   Schedule[]
    commandLogs CommandLog[]
    installedGateways Gateway[]
+   refreshTokens RefreshToken[]
    createdAt   DateTime     @default(now())
    updatedAt   DateTime     @updatedAt
 
    @@map("users")
  }
+
+model RefreshToken{
+  id String @id @default(uuid())
+  tokenHash String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
 
 model Role {
   id          String           @id @default(uuid())
