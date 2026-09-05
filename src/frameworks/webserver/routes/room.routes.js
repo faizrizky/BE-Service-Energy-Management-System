@@ -51,5 +51,10 @@ router.get(
   checkPermission("room", "view"),
   controller.deviceLogs,
 );
+router.get(
+  "/:id/usage-summary",
+  checkPermission("room", "view"),
+  controller.usageSummary,
+);
 
 module.exports = router;

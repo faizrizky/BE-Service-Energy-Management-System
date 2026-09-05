@@ -5,6 +5,19 @@ const {
   emitGatewayDeleted,
 } = require("../../../frameworks/webserver/socket-events");
 
+const ONLINE_THRESHOLD_MULTIPLIER = 2;
+
+function isDeviceOnline(device, now) {
+  if (!device.lastSeenAt) return false;
+  const thresholdMs =
+    device.intervalMinutes * ONLINE_THRESHOLD_MULTIPLIER * 60 * 1000;
+  return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
+}
+
+function computeGatewayStatus(device, now) {
+  return device.some((d) => isDeviceOnline(d, now)) ? "online" : "offline";
+}
+
 async function listGatewaysPaginated({
   page = 1,
   rowsPerPage = 10,
@@ -26,15 +39,24 @@ async function listGatewaysPaginated({
     prisma.gateway.count({ where }),
     prisma.gateway.findMany({
       where,
-      include: { installedBy: { select: { id: true, fullName: true } } },
+      include: {
+        installedBy: { select: { id: true, fullName: true } },
+        devices: { select: { lastSeenAt: true, intervalMinutes: true } },
+      },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * rowsPerPage,
       take: rowsPerPage,
     }),
   ]);
 
+  const now = new Date();
+  const data = gateways.map(({ devices, ...gateway }) => ({
+    ...gateway,
+    status: computeGatewayStatus(devices, now),
+  }));
+
   return {
-    data: gateways,
+    data,
     page,
     rowsPerPage,
     totalRows,
@@ -43,13 +65,19 @@ async function listGatewaysPaginated({
 }
 
 async function getGatewayById(id) {
-  return prisma.gateway.findUnique({
+  const gateway = await prisma.gateway.findUnique({
     where: { id },
     include: {
       devices: true,
       installedBy: { select: { id: true, fullName: true, username: true } },
     },
   });
+  if (!gateway) return null;
+
+  return {
+    ...gateway,
+    status: computeGatewayStatus(gateway.devices, new Date()),
+  };
 }
 
 async function createGateway(data) {
@@ -68,7 +96,7 @@ async function createGateway(data) {
     },
     include: { installedBy: { select: { id: true, fullName: true } } },
   });
-  emitGatewayCreated(gateway);
+  emitGatewayCreated({ ...gateway, status: "offline" });
   return gateway;
 }
 

@@ -47,6 +47,15 @@ async function summary(req, res, next) {
   }
 }
 
+async function usageSummary(req, res, next) {
+  try {
+    const usage = await roomUseCase.getRoomUsageSummary(req.params.id);
+    res.json({ data: usage });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function stats(req, res, next) {
   try {
     const data = await roomUseCase.getRoomStats();
@@ -130,4 +139,5 @@ module.exports = {
   devices,
   power,
   deviceLogs,
+  usageSummary,
 };

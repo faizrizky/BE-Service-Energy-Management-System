@@ -10,6 +10,8 @@ const {
   emitRoomPower,
 } = require("../../../frameworks/webserver/socket-events");
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
 async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
   const where = {
     ...(search
@@ -75,6 +77,61 @@ async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
   };
 }
 
+async function computeRoomUsage(roomId) {
+  const devices = await prisma.device.findMany({ where: { roomId } });
+  const since = new Date(Date.now() - ONE_DAY_MS);
+
+  const perDevice = await Promise.all(
+    devices.map(async (device) => {
+      const agg = await prisma.energyReading.aggregate({
+        where: { devideId: device.id, recordedAt: { gte: since } },
+        _sum: { usageKwh: true },
+        _avg: { usageKwh: true },
+        _max: { usageKwh: true },
+      });
+      return {
+        name: device.name,
+        totalKwh: agg._sum.usageKwh || 0,
+        avgKwh: agg._avg.usageKwh || 0,
+        peakKwh: agg._max.usageKwh || 0,
+      };
+    }),
+  );
+
+  const total24Kwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
+  const avg24Kwh = perDevice.length
+    ? perDevice.reduce((sumd, d) => sum + d.avgKwh, 0) / perDevice.length
+    : 0;
+  const peakKwh = perDevice.reduce((max, d) => Math.max(max, d.peakKwh), 0);
+  const highest = perDevice.reduce(
+    (best, d) => (best?.totalKwh || 0 ? d : best),
+    null,
+  );
+
+  return {
+    total24Kwh: Number(total24Kwh.toFixed(2)),
+    avg24Kwh: Number(avg24Kwh.toFixed(2)),
+    peakKwh: Number(peakKwh.toFixed(2)),
+    highestComponent: {
+      name: highest?.name || "-",
+      kwh: Number((highest?.totalKwh || 0).toFixed(2)),
+    },
+  };
+}
+
+async function getRoomUsageSummary(roomId) {
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { id: true },
+  });
+  if (!room) {
+    const err = new Error("Room tidak ditemukan");
+    err.status = 404;
+    throw err;
+  }
+  return computeRoomUsage(roomId);
+}
+
 async function getRoomById(id, { page = 1, rowsPerPage = 10, search } = {}) {
   const room = await prisma.room.findUnique({ where: { id } });
   if (!room) return null;
@@ -95,7 +152,7 @@ async function getRoomById(id, { page = 1, rowsPerPage = 10, search } = {}) {
       : {}),
   };
 
-  const [totalRows, devices] = await Promise.all([
+  const [totalRows, devices, usage] = await Promise.all([
     prisma.device.count({ where: deviceWhere }),
     prisma.device.findMany({
       where: deviceWhere,
@@ -103,65 +160,36 @@ async function getRoomById(id, { page = 1, rowsPerPage = 10, search } = {}) {
       skip: (page - 1) * rowsPerPage,
       take: rowsPerPage,
     }),
+    computeRoomUsage(id), // <- selalu dari semua device, gak kena efek pagination di atas
   ]);
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const since = new Date(Date.now() - ONE_DAY_MS);
 
-  const perDevice = await Promise.all(
+  const deviceRows = await Promise.all(
     devices.map(async (device) => {
       const agg = await prisma.energyReading.aggregate({
         where: { deviceId: device.id, recordedAt: { gte: since } },
         _sum: { usageKwh: true },
-        _avg: { usageKwh: true },
-        _max: { usageKwh: true },
       });
-
       const totalKwh = agg._sum.usageKwh || 0;
-      const avgKwh = agg._avg.usageKwh || 0;
-      const peakKwh = agg._max.usageKwh || 0;
-
       return {
-        name: device.name,
-        totalKwh,
-        avgKwh,
-        peakKwh,
-        row: {
-          id: device.id,
-          tbDeviceId: device.tbDeviceId || device.eui,
-          deviceEui: device.eui,
-          deviceType: device.deviceType || "-",
-          totalUsage24hKwh: Number(totalKwh.toFixed(2)),
-          intervalMinutes: device.intervalMinutes,
-          isPowerOn: device.status === "on",
-        },
+        id: device.id,
+        tbDeviceId: device.tbDeviceId || device.eui,
+        deviceEui: device.eui,
+        deviceType: device.deviceType || "-",
+        totalUsage24hKwh: Number(totalKwh.toFixed(2)),
+        intervalMinutes: device.intervalMinutes,
+        isPowerOn: device.status === "on",
       };
     }),
-  );
-
-  const total24hKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
-  const avg24hKwh = perDevice.length
-    ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
-    : 0;
-  const peakKwh = perDevice.reduce((max, d) => Math.max(max, d.peakKwh), 0);
-  const highest = perDevice.reduce(
-    (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
-    null,
   );
 
   return {
     ...room,
     lastUpdatedAt: room.updatedAt,
-    usage: {
-      total24hKwh: Number(total24hKwh.toFixed(2)),
-      avg24hKwh: Number(avg24hKwh.toFixed(2)),
-      peakKwh: Number(peakKwh.toFixed(2)),
-      highestComponent: {
-        name: highest?.name || "-",
-        kwh: Number((highest?.totalKwh || 0).toFixed(2)),
-      },
-    },
+    usage,
     devices: {
-      data: perDevice.map((d) => d.row),
+      data: deviceRows,
       page,
       rowsPerPage,
       totalRows,
@@ -484,6 +512,7 @@ module.exports = {
   listRoomsSummary,
   getRoomStats,
   getRoomById,
+  getRoomUsageSummary,
   createRoom,
   updateRoom,
   deleteRoom,
