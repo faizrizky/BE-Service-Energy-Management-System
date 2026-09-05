@@ -32,13 +32,15 @@ async function issueRefreshToken(userId) {
 async function login({ username, password }, req) {
   const { maxFailedAttempts, lockoutMinutes } = config.loginSecurity;
 
-  const user = await prisma.user.findUnique({
-    where: { username },
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [{ username }, { email: username }],
+    },
     include: { role: true },
   });
 
   const genericErr = () => {
-    const err = new Error("Username atau password salah");
+    const err = new Error("Username/Email atau password salah");
     err.status = 401;
     throw err;
   };
@@ -48,7 +50,7 @@ async function login({ username, password }, req) {
       type: "LOGIN_FAILED",
       username,
       req,
-      detail: "Username tidak ditemukan",
+      detail: "Username/Email tidak ditemukan",
     });
     throw genericErr();
   }
