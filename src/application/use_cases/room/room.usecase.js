@@ -3,6 +3,13 @@ const {
   sendRelayCommandConfirmed,
 } = require("../../../frameworks/thingsboard/client");
 
+const {
+  emitRoomCreated,
+  emitRoomUpdated,
+  emitRoomDeleted,
+  emitRoomPower,
+} = require("../../../frameworks/webserver/socket-events");
+
 async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
   const where = {
     ...(search
@@ -279,7 +286,7 @@ async function getRoomStats() {
 }
 
 async function createRoom(data) {
-  return prisma.room.create({
+  const room = await prisma.room.create({
     data: {
       name: data.name,
       picName: data.picName,
@@ -290,10 +297,12 @@ async function createRoom(data) {
       isCritical: data.isCritical || false,
     },
   });
+  emitRoomCreated(room);
+  return room;
 }
 
 async function updateRoom(id, data) {
-  return prisma.room.update({
+  const room = await prisma.room.update({
     where: { id },
     data: {
       name: data.name,
@@ -305,10 +314,28 @@ async function updateRoom(id, data) {
       isCritical: data.isCritical,
     },
   });
+  emitRoomUpdated(room);
+  return room;
 }
 
 async function deleteRoom(id) {
-  return prisma.room.delete({ where: { id } });
+  const deviceCount = await prisma.device.count({ where: { roomId: id } });
+  if (deviceCount > 0) {
+    const err = new Error(
+      `Room tidak bisa dihapus karena masih memiliki ${deviceCount} device. Pindahkan atau hapus device tersebut terlebih dahulu.`,
+    );
+    err.status = 409;
+    throw err;
+  }
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    await tx.commandLog.deleteMany({ where: { roomId: id } });
+    await tx.schedule.deleteMany({ where: { roomId: id } });
+    return tx.room.delete({ where: { id } });
+  });
+
+  emitRoomDeleted(deleted.id);
+  return deleted;
 }
 
 async function listDevicesInRoom(roomId) {
@@ -388,6 +415,7 @@ async function powerRoom(roomId, action, options = {}) {
 
     results.push({ deviceId: device.id, status, notes });
   }
+  emitRoomPower(roomId, results);
 
   return { roomId, action, results };
 }

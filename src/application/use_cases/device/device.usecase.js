@@ -6,6 +6,13 @@ const {
   listTbDevices,
 } = require("../../../frameworks/thingsboard/client");
 
+const {
+  emitDeviceCreated,
+  emitDeviceUpdated,
+  emitDeviceDeleted,
+  emitDeviceStatus,
+} = require("../../../frameworks/webserver/socket-events");
+
 const MAX_HISTORY_RANGE_DAYS = 90;
 
 async function listDevicesPaginated({
@@ -62,7 +69,7 @@ async function getDeviceById(id) {
 }
 
 async function createDevice(data) {
-  return prisma.device.create({
+  const device = await prisma.device.create({
     data: {
       eui: data.eui,
       tbDeviceId: data.tbDeviceId || null,
@@ -73,10 +80,12 @@ async function createDevice(data) {
       gatewayId: data.gatewayId,
     },
   });
+  emitDeviceCreated(device);
+  return device;
 }
 
 async function updateDevice(id, data) {
-  return prisma.device.update({
+  const device = await prisma.device.update({
     where: { id },
     data: {
       name: data.name,
@@ -87,10 +96,12 @@ async function updateDevice(id, data) {
       gatewayId: data.gatewayId,
     },
   });
+  emitDeviceUpdated(device);
+  return device;
 }
 
 async function deleteDevice(id) {
-  return prisma.$transaction(async (tx) => {
+  const deleted = await prisma.$transaction(async (tx) => {
     const device = await tx.device.findUnique({
       where: { id },
       select: { id: true },
@@ -102,24 +113,21 @@ async function deleteDevice(id) {
       throw err;
     }
 
-    await tx.energyReading.deleteMany({
-      where: { deviceId: id },
-    });
-
+    await tx.energyReading.deleteMany({ where: { deviceId: id } });
     await tx.commandLog.updateMany({
       where: { deviceId: id },
       data: { deviceId: null },
     });
-
     await tx.schedule.updateMany({
       where: { deviceId: id },
       data: { deviceId: null },
     });
 
-    return tx.device.delete({
-      where: { id },
-    });
+    return tx.device.delete({ where: { id } });
   });
+
+  emitDeviceDeleted(deleted.id);
+  return deleted;
 }
 
 async function powerDevice(deviceId, action, options = {}) {
@@ -166,9 +174,16 @@ async function powerDevice(deviceId, action, options = {}) {
   });
 
   if (status === "success") {
-    await prisma.device.update({
+    const updated = await prisma.device.update({
       where: { id: deviceId },
       data: { status: action },
+    });
+    emitDeviceStatus({
+      deviceId: updated.id,
+      eui: updated.eui,
+      roomId: updated.roomId,
+      status: updated.status,
+      timestamp: new Date().toISOString(),
     });
   }
 

@@ -1,7 +1,9 @@
 // src/adapters/controllers/thingsboard-webhook.controller.js
 const crypto = require("crypto");
 const { prisma } = require("../../frameworks/database/prismaClient");
-const { getIO } = require("../../frameworks/webserver/socket");
+const {
+  emitDeviceStatus,
+} = require("../../frameworks/webserver/socket-events");
 const { config } = require("../../config/config");
 const logger = require("../../frameworks/helpers/logger");
 const { parseWebhookBody } = require("../../frameworks/thingsboard/contract");
@@ -122,17 +124,15 @@ async function handleDeviceUpdate(req, res, next) {
       });
     }
 
-    try {
-      getIO().emit("device:status", {
-        deviceId: device.id,
-        eui: device.eui,
-        roomId: device.roomId,
-        status: relayStatus || device.status,
-        powerWatt,
-        usageKwh,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (ioErr) {}
+    emitDeviceStatus({
+      deviceId: device.id,
+      eui: device.eui,
+      roomId: device.roomId,
+      status: relayStatus || device.status,
+      powerWatt,
+      usageKwh,
+      timestamp: new Date().toISOString(),
+    });
 
     res.status(200).json({ received: true });
   } catch (err) {

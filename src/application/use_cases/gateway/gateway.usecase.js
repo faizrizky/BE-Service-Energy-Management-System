@@ -1,4 +1,9 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const {
+  emitGatewayCreated,
+  emitGatewayUpdated,
+  emitGatewayDeleted,
+} = require("../../../frameworks/webserver/socket-events");
 
 async function listGatewaysPaginated({
   page = 1,
@@ -48,7 +53,7 @@ async function getGatewayById(id) {
 }
 
 async function createGateway(data) {
-  return prisma.gateway.create({
+  const gateway = await prisma.gateway.create({
     data: {
       eui: data.eui,
       name: data.name,
@@ -63,10 +68,12 @@ async function createGateway(data) {
     },
     include: { installedBy: { select: { id: true, fullName: true } } },
   });
+  emitGatewayCreated(gateway);
+  return gateway;
 }
 
 async function updateGateway(id, data) {
-  return prisma.gateway.update({
+  const gateway = await prisma.gateway.update({
     where: { id },
     data: {
       name: data.name,
@@ -84,10 +91,23 @@ async function updateGateway(id, data) {
     },
     include: { installedBy: { select: { id: true, fullName: true } } },
   });
+  emitGatewayUpdated(gateway);
+  return gateway;
 }
 
 async function deleteGateway(id) {
-  return prisma.gateway.delete({ where: { id } });
+  const deviceCount = await prisma.device.count({ where: { gatewayId: id } });
+  if (deviceCount > 0) {
+    const err = new Error(
+      `Gateway tidak bisa dihapus karena masih memiliki ${deviceCount} device. Pindahkan atau hapus device tersebut terlebih dahulu.`,
+    );
+    err.status = 409;
+    throw err;
+  }
+
+  const deleted = await prisma.gateway.delete({ where: { id } });
+  emitGatewayDeleted(deleted.id);
+  return deleted;
 }
 
 module.exports = {

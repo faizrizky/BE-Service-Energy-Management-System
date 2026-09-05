@@ -4,6 +4,12 @@ const {
   occurrenceDatesOverlap,
 } = require("./schedule-time.util");
 
+const {
+  emitScheduleCreated,
+  emitScheduleUpdated,
+  emitScheduleDeleted,
+} = require("../../../frameworks/webserver/socket-events");
+
 const SAFE_USER_SELECT = {
   id: true,
   fullName: true,
@@ -118,7 +124,7 @@ async function createSchedule(data, userId) {
 
   await assertNoScheduleConflict({ ...data, scheduledDate });
 
-  return prisma.schedule.create({
+  const schedule = await prisma.schedule.create({
     data: {
       roomId: data.roomId,
       deviceId: data.deviceId || null,
@@ -131,6 +137,8 @@ async function createSchedule(data, userId) {
       createdById: userId,
     },
   });
+  emitScheduleCreated(schedule);
+  return schedule;
 }
 
 async function updateSchedule(id, data) {
@@ -156,7 +164,7 @@ async function updateSchedule(id, data) {
 
   await assertNoScheduleConflict(merged, id);
 
-  return prisma.schedule.update({
+  const schedule = await prisma.schedule.update({
     where: { id },
     data: {
       roomId: data.roomId,
@@ -172,10 +180,14 @@ async function updateSchedule(id, data) {
       status: data.status,
     },
   });
+  emitScheduleUpdated(schedule);
+  return schedule;
 }
 
 async function deleteSchedule(id) {
-  return prisma.schedule.delete({ where: { id } });
+  const deleted = await prisma.schedule.delete({ where: { id } });
+  emitScheduleDeleted(deleted.id);
+  return deleted;
 }
 
 module.exports = {
