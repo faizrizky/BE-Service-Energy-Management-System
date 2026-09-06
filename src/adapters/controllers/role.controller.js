@@ -7,8 +7,9 @@ const roleUseCase = require("../../application/use_cases/role/role.usecase");
 
 async function index(req, res, next) {
   try {
-    const { page = 1, rowsPerPage = 10 } = req.query;
+    const { page = 1, rowsPerPage = 10, search } = req.query;
     const roles = await roleUseCase.listRolesPaginated({
+      search,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });

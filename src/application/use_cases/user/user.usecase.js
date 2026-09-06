@@ -21,18 +21,10 @@ async function listUsersPaginated({
     ...(search
       ? {
           OR: [
-            {
-              fullName: {
-                contains: search,
-                mode: "insensitive",
-              },
-            },
-            {
-              address: {
-                contains: search,
-                mode: "insensitive",
-              },
-            },
+            { fullName: { contains: search, mode: "insensitive" } },
+            { username: { contains: search, mode: "insensitive" } },
+            { email: { contains: search, mode: "insensitive" } },
+            { address: { contains: search, mode: "insensitive" } },
             { role: { name: { contains: search, mode: "insensitive" } } },
           ],
         }

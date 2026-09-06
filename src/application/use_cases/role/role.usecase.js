@@ -1,11 +1,16 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 
-async function listRolesPaginated(filter = {}) {
-  const { page = 1, rowsPerPage = 10, search } = filter;
+async function listRolesPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
+  const where = search
+    ? {
+        OR: [{ name: { contains: search, mode: "insensitive" } }],
+      }
+    : undefined;
 
   const [totalRows, roles] = await Promise.all([
-    prisma.role.count(),
+    prisma.role.count({ where }),
     prisma.role.findMany({
+      where,
       include: {
         permissions: { include: { permission: true } },
         _count: { select: { users: true } },
@@ -15,7 +20,6 @@ async function listRolesPaginated(filter = {}) {
       take: rowsPerPage,
     }),
   ]);
-
   return {
     data: roles,
     page,
