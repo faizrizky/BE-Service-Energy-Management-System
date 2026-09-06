@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe("createDevice", () => {
-  test("default intervalMinutes 5 & tbDeviceId null kalau gak diisi", async () => {
+  test("default intervalMinutes 15 & tbDeviceId null kalau gak diisi", async () => {
     prisma.device.create.mockResolvedValue({ id: "d1" });
     await deviceUseCase.createDevice({
       eui: "EUI-1",
@@ -36,7 +36,7 @@ describe("createDevice", () => {
     });
 
     expect(prisma.device.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ intervalMinutes: 5, tbDeviceId: null }),
+      data: expect.objectContaining({ intervalMinutes: 15, tbDeviceId: null }),
     });
   });
 });

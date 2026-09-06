@@ -75,7 +75,7 @@ async function createDevice(data) {
       tbDeviceId: data.tbDeviceId || null,
       name: data.name,
       deviceType: data.deviceType,
-      intervalMinutes: data.intervalMinutes || 5,
+      intervalMinutes: data.intervalMinutes || 15,
       roomId: data.roomId,
       gatewayId: data.gatewayId,
     },

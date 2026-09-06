@@ -84,7 +84,7 @@ async function computeRoomUsage(roomId) {
   const perDevice = await Promise.all(
     devices.map(async (device) => {
       const agg = await prisma.energyReading.aggregate({
-        where: { devideId: device.id, recordedAt: { gte: since } },
+        where: { deviceId: device.id, recordedAt: { gte: since } },
         _sum: { usageKwh: true },
         _avg: { usageKwh: true },
         _max: { usageKwh: true },
@@ -98,19 +98,19 @@ async function computeRoomUsage(roomId) {
     }),
   );
 
-  const total24Kwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
-  const avg24Kwh = perDevice.length
-    ? perDevice.reduce((sumd, d) => sum + d.avgKwh, 0) / perDevice.length
+  const total24hKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
+  const avg24hKwh = perDevice.length
+    ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
     : 0;
   const peakKwh = perDevice.reduce((max, d) => Math.max(max, d.peakKwh), 0);
   const highest = perDevice.reduce(
-    (best, d) => (best?.totalKwh || 0 ? d : best),
+    (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
     null,
   );
 
   return {
-    total24Kwh: Number(total24Kwh.toFixed(2)),
-    avg24Kwh: Number(avg24Kwh.toFixed(2)),
+    total24hKwh: Number(total24hKwh.toFixed(2)),
+    avg24hKwh: Number(avg24hKwh.toFixed(2)),
     peakKwh: Number(peakKwh.toFixed(2)),
     highestComponent: {
       name: highest?.name || "-",

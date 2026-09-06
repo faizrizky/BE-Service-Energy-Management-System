@@ -121,7 +121,7 @@ model Device {
   gatewayId       String
   name            String
   deviceType      String?
-  intervalMinutes Int             @default(5)
+  intervalMinutes Int             @default(15)
   status          String          @default("off")
   lastSeenAt      DateTime?
   room            Room            @relation(fields: [roomId], references: [id])
