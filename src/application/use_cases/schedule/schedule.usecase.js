@@ -17,24 +17,50 @@ const SAFE_USER_SELECT = {
   email: true,
 };
 
-async function listSchedulesPaginated(filter = {}) {
-  const { roomId, page = 1, rowsPerPage = 10, search } = filter;
+function buildStatusWhere(status) {
+  if (status !== "active" && status !== "upcoming") return null;
 
-  const where = {
-    ...(roomId ? { roomId } : {}),
-    ...(search
-      ? {
-          OR: [
-            { room: { name: { contains: search, mode: "insensitive" } } },
-            { device: { name: { contains: search, mode: "insensitive" } } },
-            { device: { eui: { contains: search, mode: "insensitive" } } },
-            {
-              device: { deviceType: { contains: search, mode: "insensitive" } },
-            },
-          ],
-        }
-      : {}),
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  if (status === "upcoming") {
+    return {
+      status: "active",
+      repeatType: "none",
+      scheduledDate: { gt: todayStart },
+    };
+  }
+
+  return {
+    status: "active",
+    OR: [
+      { repeatType: { not: "none" } },
+      { scheduledDate: { lte: todayStart } },
+    ],
   };
+}
+
+async function listSchedulesPaginated(filter = {}) {
+  const { roomId, page = 1, rowsPerPage = 10, search, status } = filter;
+
+  const andConditions = [];
+  if (roomId) andConditions.push({ roomId });
+
+  const statusWhere = buildStatusWhere(status);
+  if (statusWhere) andConditions.push(statusWhere);
+
+  if (search) {
+    andConditions.push({
+      OR: [
+        { room: { name: { contains: search, mode: "insensitive" } } },
+        { device: { name: { contains: search, mode: "insensitive" } } },
+        { device: { eui: { contains: search, mode: "insensitive" } } },
+        { device: { deviceType: { contains: search, mode: "insensitive" } } },
+      ],
+    });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : {};
 
   const [totalRows, schedules] = await Promise.all([
     prisma.schedule.count({ where }),
