@@ -55,7 +55,7 @@ async function listUsersPaginated({
     page,
     rowsPerPage,
     totalRows,
-    totalPage: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
 }
 

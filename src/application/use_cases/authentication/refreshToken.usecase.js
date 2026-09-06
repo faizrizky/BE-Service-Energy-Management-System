@@ -3,7 +3,7 @@ const { hashToken } = require("../../../frameworks/helpers/tokenHash");
 const { signAccessToken, issueRefreshToken } = require("./login.usecase");
 const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 
-async function refreshAccessToken(rawRefreshToken) {
+async function refreshAccessToken(rawRefreshToken, req) {
   const tokenHash = hashToken(rawRefreshToken);
 
   const record = await prisma.refreshToken.findUnique({

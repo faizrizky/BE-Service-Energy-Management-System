@@ -23,7 +23,7 @@ async function loginController(req, res, next) {
 
 async function refreshController(req, res, next) {
   try {
-    const result = await refreshAccessToken(req.body.refreshToken);
+    const result = await refreshAccessToken(req.body.refreshToken, req);
     res.json({ data: result });
   } catch (err) {
     next(err);
