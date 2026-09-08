@@ -1,4 +1,5 @@
 const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const { config } = require("../../../config/config");
 
 const apiLimiter = rateLimit({
@@ -20,6 +21,19 @@ const authLimiter = rateLimit({
   message: { message: "Terlalu banyak percobaan login, coba lagi nanti" },
 });
 
+const refreshLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const token = req.body?.refreshToken;
+    if (typeof token !== "string" || !token) return req.ip;
+    return crypto.createHash("sha256").update(token).digest("hex");
+  },
+  message: { message: "Terlalu banyak percobaan refresh, coba lagi sebentar" },
+});
+
 const powerLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: config.rateLimit.powerMax,
@@ -38,4 +52,10 @@ const meLimiter = rateLimit({
   message: { message: "Terlalu banyak permintaan sesi, coba lagi sebentar" },
 });
 
-module.exports = { apiLimiter, authLimiter, powerLimiter, meLimiter };
+module.exports = {
+  apiLimiter,
+  authLimiter,
+  refreshLimiter,
+  powerLimiter,
+  meLimiter,
+};

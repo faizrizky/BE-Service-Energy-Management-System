@@ -10,7 +10,11 @@ const {
 const authMiddleware = require("../middlewares/authMiddleware");
 const validate = require("../middlewares/validate");
 const requireCaptcha = require("../middlewares/requireCaptcha");
-const { authLimiter, meLimiter } = require("../middlewares/rateLimiter");
+const {
+  authLimiter,
+  refreshLimiter,
+  meLimiter,
+} = require("../middlewares/rateLimiter");
 const {
   loginSchema,
   refreshSchema,
@@ -25,7 +29,7 @@ router.post(
 );
 router.post(
   "/refresh",
-  authLimiter,
+  refreshLimiter,
   validate(refreshSchema),
   refreshController,
 );

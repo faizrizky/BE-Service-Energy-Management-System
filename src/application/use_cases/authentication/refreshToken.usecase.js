@@ -11,9 +11,10 @@ async function refreshAccessToken(rawRefreshToken, req) {
     include: { user: { include: { role: true } } },
   });
 
-  const isValid = !record || record.revokedAt || record.expiresAt < new Date();
+  const isInvalid =
+    !record || Boolean(record.revokedAt) || record.expiresAt < new Date();
 
-  if (!isValid) {
+  if (isInvalid) {
     await logSecurityEvent({
       type: "REFRESH_TOKEN_FAILED",
       userId: record?.userId,
