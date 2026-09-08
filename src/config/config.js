@@ -46,6 +46,7 @@ const config = {
     max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 300,
     authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 10,
     powerMax: parseInt(process.env.RATE_LIMIT_POWER_MAX, 10) || 20,
+    meMax: parseInt(process.env.RATE_LIMIT_ME_MAX, 10) || 60,
   },
 
   turnstile: {
