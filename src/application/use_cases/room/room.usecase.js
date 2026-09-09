@@ -12,27 +12,43 @@ const {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-async function listRoomsPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
-  const where = {
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            {
-              devices: {
-                some: {
-                  gatewayId: {
-                    contains: search,
-                    mode: "insensitive",
-                  },
-                },
-              },
+async function listRoomsPaginated({
+  page = 1,
+  rowsPerPage = 10,
+  search,
+  createdFrom,
+  createdTo,
+} = {}) {
+  const andConditions = [];
+
+  if (search) {
+    andConditions.push({
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        {
+          devices: {
+            some: {
+              gatewayId: { contains: search, mode: "insensitive" },
             },
-            { location: { contains: search, mode: "insensitive" } },
-          ],
-        }
-      : {}),
-  };
+          },
+        },
+        { location: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+    if (createdFrom) createdAt.gte = new Date(createdFrom);
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    andConditions.push({ createdAt });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : {};
 
   const [totalRows, rooms] = await Promise.all([
     prisma.room.count({ where }),

@@ -8,10 +8,18 @@ const roomUseCase = require("../../application/use_cases/room/room.usecase");
 
 async function index(req, res, next) {
   try {
-    const { page = 1, rowsPerPage = 10, search } = req.query;
+    const {
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
 
     const result = await roomUseCase.listRoomsPaginated({
       search,
+      createdFrom,
+      createdTo,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });
