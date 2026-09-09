@@ -139,6 +139,44 @@ app.post("/api/rpc/oneway/:deviceId", (req, res) => {
   });
 });
 
+app.post("/api/rpc/twoway/:deviceId", (req, res) => {
+  const { deviceId } = req.params;
+  const state = deviceState.get(deviceId);
+  if (!state) {
+    console.warn(`[Mock TB] RPC ke device tidak dikenal: ${deviceId}`);
+    return res
+      .status(404)
+      .json({ message: "Device tidak ditemukan di simulasi" });
+  }
+
+  const action = parseRelayRpcPayload(req.body);
+  if (action === null) {
+    console.warn(
+      `[Mock TB] RPC payload tidak dikenal: ${JSON.stringify(req.body)}`,
+    );
+    return res
+      .status(400)
+      .json({
+        message: "RPC payload tidak sesuai kontrak yang dikenali mock ini",
+      });
+  }
+
+  state.relayStatus = action;
+  console.log(
+    `[Mock TB] RPC twoway diterima: "${state.name}" (${deviceId}) -> relay ${action}`,
+  );
+
+  // twoway = TB nunggu device respons; mock langsung balas synchronous
+  res.status(200).json({ success: true });
+
+  pushWebhookEvent(deviceId, state).catch((err) => {
+    console.error(
+      `[Mock TB] Gagal kirim webhook setelah RPC twoway:`,
+      err.message,
+    );
+  });
+});
+
 app.get(
   "/api/plugins/telemetry/DEVICE/:deviceId/values/timeseries",
   (req, res) => {
