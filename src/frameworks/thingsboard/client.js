@@ -31,7 +31,29 @@ async function tbRequest(path, options = {}, timeoutMs = 10_000) {
   }
 
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  const contentType = response.headers.get("content-type") || "";
+
+  let body = null;
+  if (text) {
+    if (!contentType.includes("application/json")) {
+      const err = new Error(
+        `[ThingsBoard] Response bukan JSON dari ${path} (status ${response.status}, content-type: "${contentType}"). ` +
+          `Kemungkinan TB_URL salah atau endpoint tidak ditemukan. Cuplikan body: ${text.slice(0, 150)}`,
+      );
+      err.status = response.status;
+      throw err;
+    }
+
+    try {
+      body = JSON.parse(text);
+    } catch (parseErr) {
+      const err = new Error(
+        `[ThingsBoard] Gagal parse JSON dari ${path} (status ${response.status}): ${text.slice(0, 150)}`,
+      );
+      err.status = response.status;
+      throw err;
+    }
+  }
 
   if (!response.ok) {
     const err = new Error(
