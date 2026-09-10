@@ -41,13 +41,32 @@ function buildStatusWhere(status) {
 }
 
 async function listSchedulesPaginated(filter = {}) {
-  const { roomId, page = 1, rowsPerPage = 10, search, status } = filter;
+  const {
+    roomId,
+    page = 1,
+    rowsPerPage = 10,
+    search,
+    status,
+    scheduledFrom,
+    scheduledTo,
+  } = filter;
 
   const andConditions = [];
   if (roomId) andConditions.push({ roomId });
 
   const statusWhere = buildStatusWhere(status);
   if (statusWhere) andConditions.push(statusWhere);
+
+  if (scheduledFrom || scheduledTo) {
+    const scheduledDate = {};
+    if (scheduledFrom) scheduledDate.gte = new Date(scheduledFrom);
+    if (scheduledTo) {
+      const end = new Date(scheduledTo);
+      end.setHours(23, 59, 59, 999);
+      scheduledDate.lte = end;
+    }
+    andConditions.push({ scheduledDate });
+  }
 
   if (search) {
     andConditions.push({

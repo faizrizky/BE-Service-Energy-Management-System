@@ -2,13 +2,23 @@ const scheduleUseCase = require("../../application/use_cases/schedule/schedule.u
 
 async function index(req, res, next) {
   try {
-    const { roomId, page = 1, rowsPerPage = 10, search, status } = req.query;
+    const {
+      roomId,
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      status,
+      scheduledFrom,
+      scheduledTo,
+    } = req.query;
     const result = await scheduleUseCase.listSchedulesPaginated({
       roomId,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
       search,
       status,
+      scheduledFrom,
+      scheduledTo,
     });
     res.json({ data: result });
   } catch (err) {
