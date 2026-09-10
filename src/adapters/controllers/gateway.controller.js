@@ -2,10 +2,18 @@ const gatewayUseCase = require("../../application/use_cases/gateway/gateway.usec
 
 async function index(req, res, next) {
   try {
-    const { page = 1, rowsPerPage = 10, search } = req.query;
+    const {
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
 
     const result = await gatewayUseCase.listGatewaysPaginated({
       search,
+      createdFrom,
+      createdTo,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });

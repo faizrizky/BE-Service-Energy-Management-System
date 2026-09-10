@@ -22,18 +22,35 @@ async function listGatewaysPaginated({
   page = 1,
   rowsPerPage = 10,
   search,
+  createdFrom,
+  createdTo,
 } = {}) {
-  const where = search
-    ? {
-        OR: [
-          { name: { contains: search, mode: "insensitive" } },
-          { eui: { contains: search, mode: "insensitive" } },
-          { modelUnit: { contains: search, mode: "insensitive" } },
-          { simcard: { contains: search, mode: "insensitive" } },
-          { powerSource: { contains: search, mode: "insensitive" } },
-        ],
-      }
-    : undefined;
+  const andConditions = [];
+
+  if (search) {
+    andConditions.push({
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { eui: { contains: search, mode: "insensitive" } },
+        { modelUnit: { contains: search, mode: "insensitive" } },
+        { simcard: { contains: search, mode: "insensitive" } },
+        { powerSource: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+    if (createdFrom) createdAt.gte = new Date(createdFrom);
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    andConditions.push({ createdAt });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : undefined;
 
   const [totalRows, gateways] = await Promise.all([
     prisma.gateway.count({ where }),
