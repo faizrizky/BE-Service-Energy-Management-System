@@ -2,10 +2,19 @@ const userUseCase = require("../../application/use_cases/user/user.usecase");
 
 async function index(req, res, next) {
   try {
-    const { roleId, page = 1, rowsPerPage = 10, search } = req.query;
+    const {
+      roleId,
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
     const users = await userUseCase.listUsersPaginated({
       search,
       roleId,
+      createdFrom,
+      createdTo,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });

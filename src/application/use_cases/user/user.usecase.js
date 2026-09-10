@@ -15,21 +15,41 @@ async function listUsersPaginated({
   rowsPerPage = 10,
   search,
   roleId,
+  createdFrom,
+  createdTo,
 } = {}) {
-  const where = {
-    ...(roleId ? { roleId } : {}),
-    ...(search
-      ? {
-          OR: [
-            { fullName: { contains: search, mode: "insensitive" } },
-            { username: { contains: search, mode: "insensitive" } },
-            { email: { contains: search, mode: "insensitive" } },
-            { address: { contains: search, mode: "insensitive" } },
-            { role: { name: { contains: search, mode: "insensitive" } } },
-          ],
-        }
-      : {}),
-  };
+  const andConditions = [];
+
+  if (roleId) {
+    andConditions.push({
+      roleId,
+    });
+  }
+
+  if (search) {
+    andConditions.push({
+      OR: [
+        { fullName: { contains: search, mode: "insensitive" } },
+        { username: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { address: { contains: search, mode: "insensitive" } },
+        { role: { name: { contains: search, mode: "insensitive" } } },
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+    if (createdFrom) createdAt.gte = new Date(createdFrom);
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    andConditions.push({ createdAt });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : undefined;
 
   const [totalRows, users] = await Promise.all([
     prisma.user.count({ where }),
