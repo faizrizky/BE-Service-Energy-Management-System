@@ -2,11 +2,21 @@ const deviceUseCase = require("../../application/use_cases/device/device.usecase
 
 async function index(req, res, next) {
   try {
-    const { roomId, gatewayId, page = 1, rowsPerPage = 10, search } = req.query;
+    const {
+      roomId,
+      gatewayId,
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
     const devices = await deviceUseCase.listDevicesPaginated({
       search,
       roomId,
       gatewayId,
+      createdFrom,
+      createdTo,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });

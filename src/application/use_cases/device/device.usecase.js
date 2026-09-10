@@ -21,25 +21,49 @@ async function listDevicesPaginated({
   search,
   gatewayId,
   roomId,
+  createdFrom,
+  createdTo,
 } = {}) {
-  const where = {
-    ...(roomId ? { roomId } : {}),
-    ...(gatewayId ? { gatewayId } : {}),
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            { roomId: { contains: search, mode: "insensitive" } },
-            { gatewayId: { contains: search, mode: "insensitive" } },
-            { eui: { contains: search, mode: "insensitive" } },
-            { deviceType: { contains: search, mode: "insensitive" } },
-            { room: { name: { contains: search, mode: "insensitive" } } },
-            { gateway: { name: { contains: search, mode: "insensitive" } } },
-            { tbDeviceId: { contains: search, mode: "insensitive" } },
-          ],
-        }
-      : {}),
-  };
+  const andConditions = [];
+
+  if (roomId) {
+    andConditions.push({
+      roomId,
+    });
+  }
+
+  if (gatewayId) {
+    andConditions.push({
+      gatewayId,
+    });
+  }
+  if (search) {
+    andConditions.push({
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { roomId: { contains: search, mode: "insensitive" } },
+        { gatewayId: { contains: search, mode: "insensitive" } },
+        { eui: { contains: search, mode: "insensitive" } },
+        { deviceType: { contains: search, mode: "insensitive" } },
+        { room: { name: { contains: search, mode: "insensitive" } } },
+        { gateway: { name: { contains: search, mode: "insensitive" } } },
+        { tbDeviceId: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+    if (createdFrom) createdAt.gte = new Date(createdFrom);
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    andConditions.push({ createdAt });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : undefined;
 
   const [totalRows, devices] = await Promise.all([
     prisma.device.count({ where }),
@@ -51,6 +75,8 @@ async function listDevicesPaginated({
       take: rowsPerPage,
     }),
   ]);
+
+  const now = new Date();
 
   return {
     data: devices,
