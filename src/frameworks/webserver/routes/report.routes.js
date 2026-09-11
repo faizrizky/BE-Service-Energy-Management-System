@@ -17,6 +17,13 @@ router.get(
   checkPermission("report", "view"),
   controller.deviceUsage,
 );
+
+router.get(
+  "/summary",
+  checkPermission("report", "view"),
+  controller.reportSummary,
+);
+
 router.get(
   "/export",
   checkPermission("report", "export"),

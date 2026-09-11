@@ -29,6 +29,21 @@ async function roomUsage(req, res, next) {
   }
 }
 
+async function reportSummary(req, res, next) {
+  try {
+    const { roomId, deviceId, from, to } = req.query;
+    const rows = await reportUseCase.getReportSummary({
+      roomId,
+      deviceId,
+      from,
+      to,
+    });
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function exportEnergy(req, res, next) {
   try {
     const { roomId, deviceId, from, to, format } = req.query;
@@ -113,6 +128,7 @@ module.exports = {
   deviceUsage,
   roomUsage,
   exportEnergy,
+  reportSummary,
   energyUsageTimeline,
   topRiskyRooms,
   activeSchedules,

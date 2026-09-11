@@ -5,12 +5,94 @@ const ExcelJS = require("exceljs");
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
+const MAX_EXPORT_RANGE_DAYS = 366;
+
 const RANGE_DAYS = {
   today: 1,
   last_week: 7,
   last_month: 30,
   last_year: 365,
 };
+
+async function getReportSummary({ roomId, deviceId, from, to }) {
+  const fromDate = parseDateStrict(from, "from");
+  const toDate = parseDateStrict(to, "to");
+  toDate.setHours(23, 59, 59, 999);
+
+  if (fromDate > toDate) {
+    const err = new Error(
+      `Parameter 'from' (${from}) tidak boleh lebih besar dari 'to' (${to})`,
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const rangeDays = (toDate - fromDate) / (1000 * 60 * 60 * 24);
+  if (rangeDays > MAX_EXPORT_RANGE_DAYS) {
+    const err = new Error(
+      `Rentang tanggal terlalu panjang (${Math.round(rangeDays)} hari), maksimal ${MAX_EXPORT_RANGE_DAYS} hari`,
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  if (roomId) {
+    const room = await prisma.room.findUnique({ where: { id: roomId } });
+    if (!room) {
+      const err = new Error(`Room dengan id "${roomId}" tidak ditemukan`);
+      err.status = 404;
+      throw err;
+    }
+  }
+
+  if (deviceId) {
+    const device = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device) {
+      const err = new Error(`Device dengan id "${deviceId}" tidak ditemukan`);
+      err.status = 404;
+      throw err;
+    }
+  }
+
+  const grouped = await prisma.energyReading.groupBy({
+    by: ["deviceId"],
+    where: {
+      recordedAt: { gte: fromDate, lte: toDate },
+      device: { roomId: roomId || undefined, id: deviceId || undefined },
+    },
+    _min: { usageKwh: true, recordedAt: true },
+    _max: { usageKwh: true, recordedAt: true },
+  });
+
+  if (grouped.length === 0) return [];
+
+  const devices = await prisma.device.findMany({
+    where: { id: { in: grouped.map((g) => g.deviceId) } },
+    include: { room: true },
+  });
+  const deviceById = new Map(devices.map((d) => [d.id, d]));
+
+  return grouped
+    .map((g) => {
+      const device = deviceById.get(g.deviceId);
+      const startUsageKwh = g._min.usageKwh ?? 0;
+      const endUsageKwh = g._max.usageKwh ?? 0;
+
+      return {
+        key: g.deviceId,
+        deviceEui: device?.eui ?? "-",
+        deviceName: device?.name ?? "-",
+        roomName: device?.room?.name ?? "-",
+        roomLocation: device?.room?.location ?? null,
+        rangeStart: g._min.recordedAt,
+        rangeEnd: g._max.recordedAt,
+        startUsageKwh,
+        endUsageKwh,
+        usageKwh: Number((endUsageKwh - startUsageKwh).toFixed(3)),
+      };
+    })
+    .sort((a, b) => b.usageKwh - a.usageKwh);
+}
 
 function isDeviceOnline(device, now) {
   if (!device.lastSeenAt) return false;
@@ -375,8 +457,6 @@ async function getActiveSchedules(status) {
   }));
 }
 
-const MAX_EXPORT_RANGE_DAYS = 366;
-
 async function exportEnergyReport({ roomId, deviceId, from, to }) {
   const fromDate = parseDateStrict(from, "from");
   const toDate = parseDateStrict(to, "to");
@@ -449,9 +529,6 @@ function toCsv(rows) {
   return [header, ...lines].join("\n");
 }
 
-/**
- * (webhook masuk tiap ~10 detik per device yang nyala).
- */
 async function pruneOldReadings() {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - config.energyRetention.days);
@@ -544,6 +621,7 @@ module.exports = {
   getRoomUsage,
   getDashboardSummary,
   exportEnergyReport,
+  getReportSummary,
   toCsv,
   toXlsx,
   toPdf,
