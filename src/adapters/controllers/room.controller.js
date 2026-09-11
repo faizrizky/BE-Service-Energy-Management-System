@@ -32,14 +32,54 @@ async function index(req, res, next) {
 
 async function show(req, res, next) {
   try {
-    const { page = 1, rowsPerPage = 10, search } = req.query;
+    const {
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
     const room = await roomUseCase.getRoomById(req.params.id, {
       search,
+      createdFrom,
+      createdTo,
       page: Number(page),
       rowsPerPage: Number(rowsPerPage),
     });
     if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
     res.json({ data: room });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function devices(req, res, next) {
+  try {
+    const {
+      page = 1,
+      rowsPerPage = 10,
+      search,
+      createdFrom,
+      createdTo,
+    } = req.query;
+
+    const room = await roomUseCase.getRoomById(req.params.id);
+
+    if (!room) {
+      return res.status(404).json({ message: "Room tidak ditemukan" });
+    }
+
+    const roomDevices = await roomUseCase.listDevicesInRoom(req.params.id, {
+      page: Number(page),
+      rowsPerPage: Number(rowsPerPage),
+      search,
+      createdFrom,
+      createdTo,
+    });
+
+    res.json({
+      data: roomDevices,
+    });
   } catch (err) {
     next(err);
   }
@@ -95,18 +135,6 @@ async function destroy(req, res, next) {
   try {
     await roomUseCase.deleteRoom(req.params.id);
     res.status(204).send();
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function devices(req, res, next) {
-  try {
-    const room = await roomUseCase.getRoomById(req.params.id);
-    if (!room) return res.status(404).json({ message: "Room tidak ditemukan" });
-
-    const roomDevices = await roomUseCase.listDevicesInRoom(req.params.id);
-    res.json({ data: roomDevices });
   } catch (err) {
     next(err);
   }

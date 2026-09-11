@@ -148,35 +148,49 @@ async function getRoomUsageSummary(roomId) {
   return computeRoomUsage(roomId);
 }
 
-async function getRoomById(id, { page = 1, rowsPerPage = 10, search } = {}) {
+async function getRoomById(
+  id,
+  { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
+) {
+  const andConditions = [];
   const room = await prisma.room.findUnique({ where: { id } });
   if (!room) return null;
 
-  const deviceWhere = {
-    roomId: id,
-    ...(search
-      ? {
-          OR: [
-            { tbDeviceId: { contains: search, mode: "insensitive" } },
-            { eui: { contains: search, mode: "insensitive" } },
-            { deviceType: { contains: search, mode: "insensitive" } },
-            ...(Number.isInteger(Number(search))
-              ? [{ intervalMinutes: Number(search) }]
-              : []),
-          ],
-        }
-      : {}),
-  };
+  if (search) {
+    andConditions.push({
+      OR: [
+        { tbDeviceId: { contains: search, mode: "insensitive" } },
+        { eui: { contains: search, mode: "insensitive" } },
+        { deviceType: { contains: search, mode: "insensitive" } },
+        ...(Number.isInteger(Number(search))
+          ? [{ intervalMinutes: Number(search) }]
+          : []),
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+    if (createdFrom) createdAt.gte = new Date(createdFrom);
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    andConditions.push({ createdAt });
+  }
+
+  const where = andConditions.length ? { AND: andConditions } : undefined;
 
   const [totalRows, devices, usage] = await Promise.all([
-    prisma.device.count({ where: deviceWhere }),
+    prisma.device.count({ where }),
     prisma.device.findMany({
-      where: deviceWhere,
+      where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * rowsPerPage,
       take: rowsPerPage,
     }),
-    computeRoomUsage(id), // <- selalu dari semua device, gak kena efek pagination di atas
+    computeRoomUsage(id),
   ]);
 
   const since = new Date(Date.now() - ONE_DAY_MS);
@@ -214,9 +228,78 @@ async function getRoomById(id, { page = 1, rowsPerPage = 10, search } = {}) {
   };
 }
 
-/**
- * Misal device interval 5 menit, ditoleransi sampai 10 menit tanpa lapor
- */
+async function listDevicesInRoom(
+  roomId,
+  { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
+) {
+  const andConditions = [{ roomId }];
+
+  if (search) {
+    andConditions.push({
+      OR: [
+        { tbDeviceId: { contains: search, mode: "insensitive" } },
+        { eui: { contains: search, mode: "insensitive" } },
+        { deviceType: { contains: search, mode: "insensitive" } },
+        ...(Number.isInteger(Number(search))
+          ? [{ intervalMinutes: Number(search) }]
+          : []),
+      ],
+    });
+  }
+
+  if (createdFrom || createdTo) {
+    const createdAt = {};
+
+    if (createdFrom) {
+      createdAt.gte = new Date(createdFrom);
+    }
+
+    if (createdTo) {
+      const end = new Date(createdTo);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+
+    andConditions.push({ createdAt });
+  }
+
+  const where = { AND: andConditions };
+
+  const [totalRows, devices] = await Promise.all([
+    prisma.device.count({ where }),
+
+    prisma.device.findMany({
+      where,
+      include: { gateway: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * rowsPerPage,
+      take: rowsPerPage,
+    }),
+  ]);
+
+  const deviceRows = await Promise.all(
+    devices.map(async (device) => ({
+      id: device.id,
+      tbDeviceId: device.tbDeviceId || device.eui,
+      deviceEui: device.eui,
+      component: device.deviceType || "-",
+      totalUsage24hKwh: Number(
+        (await computeDeviceUsage24h(device.id)).toFixed(2),
+      ),
+      intervalMinutes: device.intervalMinutes,
+      isPowerOn: device.status === "on",
+    })),
+  );
+
+  return {
+    data: deviceRows,
+    page,
+    rowsPerPage,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
+  };
+}
+
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
 function isDeviceOnline(device, now) {
@@ -380,28 +463,6 @@ async function deleteRoom(id) {
 
   emitRoomDeleted(deleted.id);
   return deleted;
-}
-
-async function listDevicesInRoom(roomId) {
-  const devices = await prisma.device.findMany({
-    where: { roomId },
-    include: { gateway: true },
-    orderBy: { createdAt: "desc" },
-  });
-
-  return Promise.all(
-    devices.map(async (device) => ({
-      id: device.id,
-      tbDeviceId: device.tbDeviceId || device.eui,
-      deviceEui: device.eui,
-      component: device.deviceType || "-",
-      totalUsage24hKwh: Number(
-        (await computeDeviceUsage24h(device.id)).toFixed(2),
-      ),
-      intervalMinutes: device.intervalMinutes,
-      isPowerOn: device.status === "on",
-    })),
-  );
 }
 
 async function powerRoom(roomId, action, options = {}) {
