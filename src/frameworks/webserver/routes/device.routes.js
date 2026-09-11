@@ -14,9 +14,9 @@ const {
 
 router.use(authMiddleware);
 router.get(
-  "/tb-candidates",
+  "/chirpstack-candidates",
   checkPermission("device", "view"),
-  controller.tbCandidates,
+  controller.chirpstackCandidates,
 );
 router.get("/", checkPermission("device", "view"), controller.index);
 router.get("/:id", checkPermission("device", "view"), controller.show);
@@ -41,9 +41,9 @@ router.post(
   controller.power,
 );
 router.get(
-  "/:id/tb-metadata",
+  "/:id/chirpstack-metadata",
   checkPermission("device", "view"),
-  controller.tbMetadata,
+  controller.chirpstackMetadata,
 );
 router.get(
   "/:id/telemetry-history",

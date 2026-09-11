@@ -1,14 +1,16 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { setRelay } = require("../../../frameworks/chirpstack/client");
 const {
-  sendRelayCommandConfirmed,
-} = require("../../../frameworks/thingsboard/client");
-
+  parseRelayResponse,
+} = require("../../../frameworks/chirpstack/contract");
 const {
   emitRoomCreated,
   emitRoomUpdated,
   emitRoomDeleted,
   emitRoomPower,
 } = require("../../../frameworks/webserver/socket-events");
+
+const RELAY_CONFIRM_WAIT_MS = 60000;
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -488,10 +490,16 @@ async function powerRoom(roomId, action, options = {}) {
 
     if (!device.tbDeviceId) {
       status = "failed";
-      notes = "Device belum terhubung ke ThingsBoard (tbDeviceId kosong)";
+      notes = "Device belum terhubung (devEUI kosong)";
     } else {
       try {
-        await sendRelayCommandConfirmed(device.tbDeviceId, action);
+        const raw = await setRelay(device.tbDeviceId, action === "on", {
+          relayTimeout: RELAY_CONFIRM_WAIT_MS,
+        });
+        if (!parseRelayResponse(raw).confirmed) {
+          status = "failed";
+          notes = "Relay belum terkonfirmasi oleh device";
+        }
       } catch (err) {
         status = "failed";
         notes = err.message;

@@ -79,9 +79,11 @@ async function power(req, res, next) {
   }
 }
 
-async function tbMetadata(req, res, next) {
+async function chirpstackMetadata(req, res, next) {
   try {
-    const data = await deviceUseCase.getDeviceTbMetadata(req.params.id);
+    const data = await deviceUseCase.getDeviceChirpstackMetadata(
+      req.params.id,
+    );
     res.json({ data });
   } catch (err) {
     next(err);
@@ -102,10 +104,10 @@ async function telemetryHistory(req, res, next) {
   }
 }
 
-async function tbCandidates(req, res, next) {
+async function chirpstackCandidates(req, res, next) {
   try {
     const { page = 0, pageSize = 50 } = req.query;
-    const result = await deviceUseCase.listTbDeviceCandidates({
+    const result = await deviceUseCase.listChirpstackDeviceCandidates({
       page: Number(page),
       pageSize: Number(pageSize),
     });
@@ -122,7 +124,7 @@ module.exports = {
   update,
   destroy,
   power,
-  tbCandidates,
-  tbMetadata,
+  chirpstackCandidates,
+  chirpstackMetadata,
   telemetryHistory,
 };

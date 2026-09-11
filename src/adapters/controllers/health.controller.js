@@ -1,6 +1,6 @@
 const { prisma } = require("../../frameworks/database/prismaClient");
 const { getRedisClient } = require("../../frameworks/tools/redisClient");
-const { tbRequest } = require("../../frameworks/thingsboard/client");
+const { listApplications } = require("../../frameworks/chirpstack/client");
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -13,7 +13,7 @@ async function healthCheck(req, res) {
     app: "ok",
     database: "unknown",
     redis: "unknown",
-    thingsboard: "unknown",
+    chirpstack: "unknown",
   };
 
   try {
@@ -31,16 +31,16 @@ async function healthCheck(req, res) {
   }
 
   try {
-    await tbRequest("/api/auth/user");
-    result.thingsboard = "ok";
+    await listApplications();
+    result.chirpstack = "ok";
   } catch (err) {
-    result.thingsboard = formatError(err);
+    result.chirpstack = formatError(err);
   }
 
   const allOk =
     result.database === "ok" &&
     result.redis === "ok" &&
-    result.thingsboard === "ok";
+    result.chirpstack === "ok";
   res.status(allOk ? 200 : 503).json(result);
 }
 

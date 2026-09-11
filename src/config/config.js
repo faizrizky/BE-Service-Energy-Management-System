@@ -24,10 +24,10 @@ const config = {
     expiresIn: process.env.JWT_EXPIRES_IN || "1h",
     refreshExpiresDays: parseInt(process.env.JWT_REFRESH_EXPIRES_DAYS, 10) || 7,
   },
-  thingsboard: {
-    baseUrl: process.env.TB_URL,
-    apiKey: process.env.TB_API_KEY,
-    webhookSecret: process.env.TB_WEBHOOK_SECRET,
+  chirpstack: {
+    baseUrl: process.env.CHIRPSTACK_MIDDLEWARE_URL,
+    applicationId: process.env.CHIRPSTACK_APPLICATION_ID,
+    deviceProfileId: process.env.CHIRPSTACK_DEVICE_PROFILE_ID,
   },
 
   energyRetention: {
@@ -63,9 +63,8 @@ function validateConfig() {
   const required = [
     ["DATABASE_URL", config.database.url],
     ["JWT_SECRET", config.jwt.secret],
-    ["TB_URL", config.thingsboard.baseUrl],
-    ["TB_API_KEY", config.thingsboard.apiKey],
-    ["TB_WEBHOOK_SECRET", config.thingsboard.webhookSecret],
+    ["CHIRPSTACK_MIDDLEWARE_URL", config.chirpstack.baseUrl],
+    ["CHIRPSTACK_APPLICATION_ID", config.chirpstack.applicationId],
   ];
 
   const missing = required.filter(([, value]) => !value).map(([key]) => key);

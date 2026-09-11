@@ -1,10 +1,13 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const {
-  getDeviceAttributes,
-  getTelemetryHistory,
-  sendRelayCommandConfirmed,
-  listTbDevices,
-} = require("../../../frameworks/thingsboard/client");
+  setRelay,
+  pingTelemetry,
+  listCsDevices,
+  getCsDevice,
+} = require("../../../frameworks/chirpstack/client");
+const {
+  parseRelayResponse,
+} = require("../../../frameworks/chirpstack/contract");
 
 const {
   emitDeviceCreated,
@@ -14,6 +17,8 @@ const {
 } = require("../../../frameworks/webserver/socket-events");
 
 const MAX_HISTORY_RANGE_DAYS = 90;
+
+const RELAY_CONFIRM_WAIT_MS = 60000;
 
 async function listDevicesPaginated({
   page = 1,
@@ -161,7 +166,6 @@ async function powerDevice(deviceId, action, options = {}) {
   const triggerType = scheduleId ? "scheduled" : "manual";
 
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
-
   if (!device) {
     const err = new Error("Device tidak ditemukan");
     err.status = 404;
@@ -170,7 +174,7 @@ async function powerDevice(deviceId, action, options = {}) {
 
   if (!device.tbDeviceId) {
     const err = new Error(
-      "Device belum terhubung ke ThingsBoard (tbDeviceId kosong)",
+      "Device belum terhubung ke ChirpStack (devEUI kosong)",
     );
     err.status = 409;
     throw err;
@@ -180,7 +184,13 @@ async function powerDevice(deviceId, action, options = {}) {
   let notes = null;
 
   try {
-    await sendRelayCommandConfirmed(device.tbDeviceId, action);
+    const raw = await setRelay(device.tbDeviceId, action === "on", {
+      relayTimeout: RELAY_CONFIRM_WAIT_MS,
+    });
+    if (!parseRelayResponse(raw).confirmed) {
+      status = "failed";
+      notes = "Relay belum terkonfirmasi oleh device";
+    }
   } catch (err) {
     status = "failed";
     notes = err.message;
@@ -246,7 +256,7 @@ function parseHistoryRange(from, to) {
   return { startTs, endTs };
 }
 
-async function requireTbDevice(deviceId) {
+async function getDeviceChirpstackMetadata(deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) {
     const err = new Error("Device tidak ditemukan");
@@ -255,72 +265,72 @@ async function requireTbDevice(deviceId) {
   }
   if (!device.tbDeviceId) {
     const err = new Error(
-      "Device belum terhubung ke ThingsBoard (tbDeviceId kosong)",
+      "Device belum terhubung ke ChirpStack (devEUI kosong)",
     );
     err.status = 409;
     throw err;
   }
-  return device;
-}
-
-async function getDeviceTbMetadata(deviceId) {
-  const device = await requireTbDevice(deviceId);
-  const attributes = await getDeviceAttributes(device.tbDeviceId);
-  return { deviceId: device.id, tbDeviceId: device.tbDeviceId, attributes };
+  const csDevice = await getCsDevice(device.tbDeviceId);
+  return {
+    deviceId: device.id,
+    devEui: device.tbDeviceId,
+    attributes: csDevice.data,
+  };
 }
 
 async function getDeviceTelemetryHistory(deviceId, { from, to, limit = 1000 }) {
-  const device = await requireTbDevice(deviceId);
-  const { startTs, endTs } = parseHistoryRange(from, to);
-
-  const raw = await getTelemetryHistory(
-    device.tbDeviceId,
-    ["powerWatt", "usageKwh"],
-    startTs,
-    endTs,
-    Number(limit),
-  );
-
-  const timeline = new Map();
-  for (const [key, points] of Object.entries(raw || {})) {
-    for (const point of points) {
-      const entry = timeline.get(point.ts) || { ts: point.ts };
-      entry[key] = Number(point.value);
-      timeline.set(point.ts, entry);
-    }
+  const device = await prisma.device.findUnique({ where: { id: deviceId } });
+  if (!device) {
+    const err = new Error("Device tidak ditemukan");
+    err.status = 404;
+    throw err;
   }
+  const { startTs, endTs } = parseHistoryRange(from, to); // fungsi lama, tetap dipakai
+
+  const readings = await prisma.energyReading.findMany({
+    where: {
+      deviceId,
+      recordedAt: { gte: new Date(startTs), lte: new Date(endTs) },
+    },
+    orderBy: { recordedAt: "asc" },
+    take: Number(limit),
+  });
 
   return {
     deviceId: device.id,
     from: new Date(startTs).toISOString(),
     to: new Date(endTs).toISOString(),
-    points: [...timeline.values()].sort((a, b) => a.ts - b.ts),
+    points: readings.map((r) => ({
+      ts: r.recordedAt.getTime(),
+      powerWatt: r.powerWatt,
+      usageKwh: r.usageKwh,
+    })),
   };
 }
 
-async function listTbDeviceCandidates({ page = 0, pageSize = 50 } = {}) {
-  const tbResult = await listTbDevices({ page, pageSize });
-  const tbIds = tbResult.data.map((d) => d.id.id);
+async function listChirpstackDeviceCandidates() {
+  const csResult = await listCsDevices();
+  const devEuis = csResult.data.result.map((d) => d.devEui);
 
-  const mappedDevices = tbIds.length
+  const mappedDevices = devEuis.length
     ? await prisma.device.findMany({
-        where: { tbDeviceId: { in: tbIds } },
+        where: { tbDeviceId: { in: devEuis } },
         select: { id: true, name: true, tbDeviceId: true },
       })
     : [];
-  const mappedByTbId = new Map(mappedDevices.map((d) => [d.tbDeviceId, d]));
+  const mappedByEui = new Map(mappedDevices.map((d) => [d.tbDeviceId, d]));
 
   return {
-    data: tbResult.data.map((d) => ({
-      tbDeviceId: d.id.id,
+    data: csResult.data.result.map((d) => ({
+      devEui: d.devEui,
       name: d.name,
-      type: d.type,
-      isMapped: mappedByTbId.has(d.id.id),
-      mappedTo: mappedByTbId.get(d.id.id) || null,
+      type: null,
+      isMapped: mappedByEui.has(d.devEui),
+      mappedTo: mappedByEui.get(d.devEui) || null,
     })),
-    page,
-    totalElements: tbResult.totalElements ?? tbResult.data.length,
-    hasNext: tbResult.hasNext ?? false,
+    page: 0,
+    totalElements: csResult.data.totalCount,
+    hasNext: false,
   };
 }
 
@@ -331,7 +341,7 @@ module.exports = {
   updateDevice,
   deleteDevice,
   powerDevice,
-  getDeviceTbMetadata,
+  getDeviceChirpstackMetadata,
   getDeviceTelemetryHistory,
-  listTbDeviceCandidates,
+  listChirpstackDeviceCandidates,
 };

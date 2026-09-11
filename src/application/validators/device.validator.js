@@ -4,7 +4,7 @@ const createDeviceSchema = z.object({
   eui: z.string().min(1, "eui wajib diisi").max(100),
   tbDeviceId: z
     .string()
-    .uuid("tbDeviceId harus UUID valid")
+    .regex(/^[0-9a-fA-F]{16}$/, "tbDeviceId harus devEUI ChirpStack (16 karakter hex)")
     .optional()
     .nullable()
     .or(z.literal("")),

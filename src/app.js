@@ -17,6 +17,9 @@ const {
 } = require("./frameworks/queue/scheduleQueue");
 const { startScheduleWorker } = require("./frameworks/queue/scheduleWorker");
 const { startRetentionJob } = require("./frameworks/queue/retentionJob");
+const {
+  startTelemetryPoller,
+} = require("./frameworks/queue/telemetryPollerJob");
 const { createServer } = require("./frameworks/webserver/server");
 
 let httpServer;
@@ -37,6 +40,7 @@ async function bootstrap() {
     await initRepeatableJob();
     scheduleWorker = startScheduleWorker();
     startRetentionJob();
+    startTelemetryPoller();
 
     httpServer.listen(config.app.port, () => {
       logger.info(
