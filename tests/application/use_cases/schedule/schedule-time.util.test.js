@@ -12,6 +12,8 @@ const {
   timeRangesOverlap,
   isStartDue,
   isEndDue,
+  getZonedParts,
+  getTodayInScheduleZone,
 } = require("../../../../src/application/use_cases/schedule/schedule-time.util");
 
 describe("timeToMinutes", () => {
@@ -40,10 +42,9 @@ describe("invertAction", () => {
 });
 
 describe("toDateOnly & toDateKey", () => {
-  test("strip waktu, sisain tanggal aja (local midnight)", () => {
+  test("strip waktu, sisain tanggal aja (00:00 UTC)", () => {
     const d = toDateOnly(new Date("2026-08-23T15:45:30.000Z"));
-    expect(d.getHours()).toBe(0);
-    expect(d.getMinutes()).toBe(0);
+    expect(d.toISOString()).toBe("2026-08-23T00:00:00.000Z");
     expect(toDateKey(d)).toBe("2026-08-23");
   });
 
@@ -434,5 +435,67 @@ describe("isEndDue", () => {
       endTime: "01:00",
     };
     expect(isEndDue(schedule, new Date("2026-08-25T01:00:00"))).toBe(true);
+  });
+});
+
+describe("getZonedParts", () => {
+  test("[positive] jam & tanggal ngikut zona waktu yang diminta, bukan zona waktu proses", () => {
+    const instant = new Date("2026-08-23T17:30:00.000Z");
+    expect(getZonedParts(instant, "Asia/Jakarta")).toEqual({
+      date: new Date("2026-08-24T00:00:00.000Z"),
+      dateKey: "2026-08-24",
+      time: "00:30",
+    });
+    expect(getZonedParts(instant, "UTC")).toMatchObject({ dateKey: "2026-08-23", time: "17:30" });
+    expect(getZonedParts(instant, "America/New_York")).toMatchObject({ dateKey: "2026-08-23", time: "13:30" });
+  });
+
+  test("[positive] default pake SCHEDULE_TIMEZONE (Asia/Jakarta)", () => {
+    expect(getZonedParts(new Date("2026-08-23T03:05:00.000Z")).time).toBe("10:05");
+  });
+
+  test("[edge] tengah malem ditulis 00, bukan 24", () => {
+    expect(getZonedParts(new Date("2026-08-23T00:00:00.000Z"), "UTC").time).toBe("00:00");
+  });
+
+  test("[negative] zona waktu ngaco -> lempar RangeError", () => {
+    expect(() => getZonedParts(new Date(), "Mars/Olympus")).toThrow(RangeError);
+  });
+});
+
+describe("getTodayInScheduleZone", () => {
+  test("[positive] 23:30 UTC udah ganti hari di WIB", () => {
+    expect(getTodayInScheduleZone(new Date("2026-08-23T23:30:00.000Z")).toISOString()).toBe(
+      "2026-08-24T00:00:00.000Z",
+    );
+  });
+});
+
+describe("isStartDue & isEndDue - zona waktu schedule", () => {
+  const once = { repeatType: "none", scheduledDate: "2026-08-24", startTime: "00:30", endTime: "02:00" };
+
+  test("[positive] 17:30 UTC = 00:30 WIB tanggal 24 -> start due di Asia/Jakarta", () => {
+    expect(isStartDue(once, new Date("2026-08-23T17:30:00.000Z"), "Asia/Jakarta")).toBe(true);
+  });
+
+  test("[negative] instant yang sama tapi zona UTC (17:30 tanggal 23) -> nggak due", () => {
+    expect(isStartDue(once, new Date("2026-08-23T17:30:00.000Z"), "UTC")).toBe(false);
+  });
+
+  test("[positive] end due di WIB walau di UTC masih tanggal sebelumnya", () => {
+    expect(isEndDue(once, new Date("2026-08-23T19:00:00.000Z"), "Asia/Jakarta")).toBe(true);
+  });
+
+  test("[positive] weekly pake hari di zona schedule (Senin WIB = Minggu UTC)", () => {
+    const weekly = { repeatType: "weekly", repeatDays: [1], scheduledDate: "2026-08-01", startTime: "06:00" };
+    // 2026-08-23T23:00Z = Senin 24 Agustus 06:00 WIB
+    expect(isStartDue(weekly, new Date("2026-08-23T23:00:00.000Z"), "Asia/Jakarta")).toBe(true);
+    expect(isStartDue({ ...weekly, startTime: "23:00" }, new Date("2026-08-23T23:00:00.000Z"), "UTC")).toBe(false);
+  });
+
+  test("[positive] cross-midnight end dicek di hari berikutnya menurut zona schedule", () => {
+    const night = { repeatType: "none", scheduledDate: "2026-08-23", startTime: "23:00", endTime: "01:00" };
+    // 2026-08-23T18:00Z = 24 Agustus 01:00 WIB
+    expect(isEndDue(night, new Date("2026-08-23T18:00:00.000Z"), "Asia/Jakarta")).toBe(true);
   });
 });

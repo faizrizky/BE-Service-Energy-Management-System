@@ -18,6 +18,7 @@ const ENV_KEYS = [
   "JWT_SECRET",
   "CHIRPSTACK_MIDDLEWARE_URL",
   "CHIRPSTACK_APPLICATION_ID",
+  "SCHEDULE_TIMEZONE",
 ];
 
 let snapshot;
@@ -74,6 +75,7 @@ describe("config defaults & parsing", () => {
     expect(config.rateLimit.powerMax).toBe(20);
     expect(config.turnstile.enabled).toBe(false);
     expect(config.loginSecurity.maxFailedAttempts).toBe(5);
+    expect(config.schedule.timezone).toBe("Asia/Jakarta");
   });
 
   test("[positive] nilai env valid di-parse ke tipe yang benar", () => {
@@ -114,6 +116,17 @@ describe("validateConfig", () => {
   test("[positive] semua env wajib terisi -> tidak melempar", () => {
     const { validateConfig } = loadConfig();
     expect(() => validateConfig()).not.toThrow();
+  });
+
+  test("[positive] SCHEDULE_TIMEZONE valid (misal UTC) -> tidak melempar", () => {
+    const { config, validateConfig } = loadConfig({ SCHEDULE_TIMEZONE: "UTC" });
+    expect(config.schedule.timezone).toBe("UTC");
+    expect(() => validateConfig()).not.toThrow();
+  });
+
+  test("[negative] SCHEDULE_TIMEZONE ngaco -> error nyebut nilainya", () => {
+    const { validateConfig } = loadConfig({ SCHEDULE_TIMEZONE: "WIB" });
+    expect(() => validateConfig()).toThrow('SCHEDULE_TIMEZONE tidak valid: "WIB"');
   });
 
   test("[negative] satu env wajib kosong -> error menyebut nama env", () => {

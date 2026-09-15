@@ -228,7 +228,7 @@ describe("scheduleWorker", () => {
     endTime: null,
     repeatType: "daily",
     repeatDays: null,
-    scheduledDate: new Date(2026, 8, 1),
+    scheduledDate: new Date("2026-09-01"),
     device: { id: "d1" },
     room: { devices: [{ id: "d1" }, { id: "d2" }] },
     ...overrides,
@@ -253,7 +253,7 @@ describe("scheduleWorker", () => {
   test("[positive] end trigger -> action dibalik & one-time ditandai completed", async () => {
     setNow(at(17, 0));
     prisma.schedule.findMany.mockResolvedValue([
-      schedule({ endTime: "17:00", repeatType: "none", scheduledDate: new Date(2026, 8, 14) }),
+      schedule({ endTime: "17:00", repeatType: "none", scheduledDate: new Date("2026-09-14") }),
     ]);
     await worker.executeDueSchedules();
     expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "off", { scheduleId: "s1" });
@@ -262,7 +262,7 @@ describe("scheduleWorker", () => {
 
   test("[positive] one-time tanpa endTime selesai saat start trigger", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ repeatType: "none", scheduledDate: new Date(2026, 8, 14) })]);
+    prisma.schedule.findMany.mockResolvedValue([schedule({ repeatType: "none", scheduledDate: new Date("2026-09-14") })]);
     await worker.executeDueSchedules();
     expect(prisma.schedule.update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { status: "completed" } });
   });
@@ -276,7 +276,7 @@ describe("scheduleWorker", () => {
 
   test("[negative] satu device gagal -> device lain tetap diproses & status tetap diperbarui", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ device: null, repeatType: "none", scheduledDate: new Date(2026, 8, 14) })]);
+    prisma.schedule.findMany.mockResolvedValue([schedule({ device: null, repeatType: "none", scheduledDate: new Date("2026-09-14") })]);
     deviceUseCase.powerDevice.mockRejectedValueOnce(Object.assign(new Error("sibuk"), { status: 409 }));
     await worker.executeDueSchedules();
     expect(deviceUseCase.powerDevice).toHaveBeenCalledTimes(2);
@@ -312,6 +312,25 @@ describe("scheduleWorker", () => {
     setNow(at(8, 0, 50));
     await worker.executeDueSchedules();
     expect(prisma.schedule.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  test("[positive] jam dicek di SCHEDULE_TIMEZONE, bukan zona waktu server", async () => {
+    const previous = process.env.SCHEDULE_TIMEZONE;
+    process.env.SCHEDULE_TIMEZONE = "UTC";
+    try {
+      jest.isolateModules(() => {
+        worker = require("../../../src/frameworks/queue/scheduleWorker");
+      });
+      // 08:00 WIB (TZ proses) = 01:00 UTC
+      setNow(at(8, 0));
+      prisma.schedule.findMany.mockResolvedValue([schedule({ startTime: "01:00" })]);
+      await worker.executeDueSchedules();
+      expect(prisma.schedule.findMany.mock.calls[0][0].where.OR).toEqual([{ startTime: "01:00" }, { endTime: "01:00" }]);
+      expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1" });
+    } finally {
+      if (previous === undefined) delete process.env.SCHEDULE_TIMEZONE;
+      else process.env.SCHEDULE_TIMEZONE = previous;
+    }
   });
 
   test("[positive] startScheduleWorker mendaftarkan worker & handler failed", () => {

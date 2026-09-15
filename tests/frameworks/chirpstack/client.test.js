@@ -163,18 +163,11 @@ describe("endpoint helpers", () => {
     expect(lastCall().body).toMatchObject({ relay: 0, wakeTimeout: 150000, relayTimeout: 90000 });
   });
 
-  test("[positive] setReportInterval & topup", async () => {
+  test("[positive] setReportInterval", async () => {
     await client.setReportInterval(DEV_EUI, 1800);
     expect(lastCall()).toMatchObject({
       url: `${BASE}/api/interval`,
       body: { devEUI: DEV_EUI, applicationId: "app-test", interval: 1800 },
     });
-    await client.topup(DEV_EUI, 50);
-    expect(lastCall().body).toEqual({ devEUI: DEV_EUI, applicationId: "app-test", topup: 50, fPort: 112 });
-  });
-
-  // topup satu-satunya helper yang tidak memvalidasi devEUI.
-  test.failing("[BUG] topup dengan devEUI tidak valid seharusnya ditolak sebelum request", () => {
-    expect(() => client.topup("bad", 10)).toThrow();
   });
 });

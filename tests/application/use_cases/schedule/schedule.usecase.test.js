@@ -23,7 +23,7 @@ const existing = (overrides = {}) => ({
   id: "existing-1",
   roomId: "room-1",
   deviceId: "device-1",
-  scheduledDate: new Date("2026-09-20T00:00:00"),
+  scheduledDate: new Date("2026-09-20"),
   startTime: "09:00",
   endTime: "11:00",
   repeatType: "none",
@@ -55,7 +55,7 @@ describe("listSchedulesPaginated", () => {
     await scheduleUseCase.listSchedulesPaginated({ status: "upcoming" });
     const [cond] = prisma.schedule.findMany.mock.calls[0][0].where.AND;
     expect(cond).toMatchObject({ status: "active", repeatType: "none" });
-    expect(cond.scheduledDate.gt.getHours()).toBe(0);
+    expect(cond.scheduledDate.gt.getUTCHours()).toBe(0);
   });
 
   test("[positive] status 'active' -> recurring atau sudah dimulai", async () => {
@@ -137,7 +137,7 @@ describe("createSchedule", () => {
 
   test("[negative] bentrok dengan jadwal harian yang dimulai lebih awal", async () => {
     prisma.schedule.findMany.mockResolvedValue([
-      existing({ repeatType: "daily", scheduledDate: new Date("2026-09-01T00:00:00") }),
+      existing({ repeatType: "daily", scheduledDate: new Date("2026-09-01") }),
     ]);
     await expect(scheduleUseCase.createSchedule(input(), "u1")).rejects.toMatchObject({ status: 409 });
   });
@@ -157,8 +157,8 @@ describe("createSchedule", () => {
   test.each([
     ["device berbeda di room yang sama", existing({ deviceId: "device-2" })],
     ["jam bersebelahan tidak beririsan", existing({ startTime: "12:01", endTime: "13:00" })],
-    ["tanggal berbeda", existing({ scheduledDate: new Date("2026-09-21T00:00:00") })],
-    ["weekly di hari lain", existing({ repeatType: "weekly", repeatDays: [1], scheduledDate: new Date("2026-09-01T00:00:00") })],
+    ["tanggal berbeda", existing({ scheduledDate: new Date("2026-09-21") })],
+    ["weekly di hari lain", existing({ repeatType: "weekly", repeatDays: [1], scheduledDate: new Date("2026-09-01") })],
   ])("[positive] tidak bentrok: %s", async (_, other) => {
     prisma.schedule.findMany.mockResolvedValue([other]);
     prisma.schedule.create.mockResolvedValue({ id: "ok" });
