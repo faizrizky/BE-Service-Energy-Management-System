@@ -1,263 +1,231 @@
-jest.mock("../../../../src/frameworks/database/prismaClient", () => ({
-  prisma: {
-    schedule: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    },
-  },
+jest.mock("../../../../src/frameworks/webserver/socket-events", () => ({
+  emitScheduleCreated: jest.fn(),
+  emitScheduleUpdated: jest.fn(),
+  emitScheduleDeleted: jest.fn(),
 }));
 
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
+const events = require("../../../../src/frameworks/webserver/socket-events");
 const scheduleUseCase = require("../../../../src/application/use_cases/schedule/schedule.usecase");
+const { resetPrismaMock } = require("../../../helpers/prisma");
+
+const input = (overrides = {}) => ({
+  roomId: "room-1",
+  deviceId: "device-1",
+  action: "on",
+  scheduledDate: "2026-09-20",
+  startTime: "10:00",
+  endTime: "12:00",
+  ...overrides,
+});
+
+const existing = (overrides = {}) => ({
+  id: "existing-1",
+  roomId: "room-1",
+  deviceId: "device-1",
+  scheduledDate: new Date("2026-09-20T00:00:00"),
+  startTime: "09:00",
+  endTime: "11:00",
+  repeatType: "none",
+  repeatDays: null,
+  status: "active",
+  ...overrides,
+});
 
 beforeEach(() => {
+  resetPrismaMock(prisma);
   jest.clearAllMocks();
 });
 
-describe("listSchedules", () => {
-  test("passing filter roomId ke query", async () => {
+describe("listSchedulesPaginated", () => {
+  beforeEach(() => {
+    prisma.schedule.count.mockResolvedValue(0);
     prisma.schedule.findMany.mockResolvedValue([]);
-    await scheduleUseCase.listSchedules({ roomId: "room-1" });
-    expect(prisma.schedule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { roomId: "room-1" } }),
-    );
   });
 
-  test("tanpa filter -> roomId undefined", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
-    await scheduleUseCase.listSchedules();
-    expect(prisma.schedule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { roomId: undefined } }),
-    );
+  test("[positive] tanpa filter -> where kosong, include relasi aman (tanpa passwordHash)", async () => {
+    const result = await scheduleUseCase.listSchedulesPaginated();
+    const call = prisma.schedule.findMany.mock.calls[0][0];
+    expect(call.where).toEqual({});
+    expect(call.include.createdBy.select).toEqual({ id: true, fullName: true, username: true, email: true });
+    expect(result).toEqual({ data: [], page: 1, rowsPerPage: 10, totalRows: 0, totalPages: 1 });
+  });
+
+  test("[positive] status 'upcoming' -> one-time setelah hari ini", async () => {
+    await scheduleUseCase.listSchedulesPaginated({ status: "upcoming" });
+    const [cond] = prisma.schedule.findMany.mock.calls[0][0].where.AND;
+    expect(cond).toMatchObject({ status: "active", repeatType: "none" });
+    expect(cond.scheduledDate.gt.getHours()).toBe(0);
+  });
+
+  test("[positive] status 'active' -> recurring atau sudah dimulai", async () => {
+    await scheduleUseCase.listSchedulesPaginated({ status: "active" });
+    const [cond] = prisma.schedule.findMany.mock.calls[0][0].where.AND;
+    expect(cond.OR).toEqual([{ repeatType: { not: "none" } }, { scheduledDate: { lte: expect.any(Date) } }]);
+  });
+
+  test("[negative] status tidak dikenal diabaikan (bukan error)", async () => {
+    await scheduleUseCase.listSchedulesPaginated({ status: "deleted" });
+    expect(prisma.schedule.findMany.mock.calls[0][0].where).toEqual({});
+  });
+
+  test("[positive] roomId + rentang tanggal + search + paginasi string di-convert ke number", async () => {
+    prisma.schedule.count.mockResolvedValue(15);
+    const result = await scheduleUseCase.listSchedulesPaginated({
+      roomId: "room-1",
+      scheduledFrom: "2026-09-01",
+      scheduledTo: "2026-09-30",
+      search: "AC",
+      page: "2",
+      rowsPerPage: "10",
+    });
+    const { where, skip } = prisma.schedule.findMany.mock.calls[0][0];
+    expect(where.AND[0]).toEqual({ roomId: "room-1" });
+    expect(where.AND[1].scheduledDate.lte.getHours()).toBe(23);
+    expect(where.AND[2].OR).toHaveLength(4);
+    expect(skip).toBe(10);
+    expect(result).toMatchObject({ page: 2, rowsPerPage: 10, totalPages: 2 });
   });
 });
 
 describe("getScheduleById", () => {
-  test("return null kalau gak ketemu (bukan throw)", async () => {
-    prisma.schedule.findUnique.mockResolvedValue(null);
-    const result = await scheduleUseCase.getScheduleById("id-gak-ada");
-    expect(result).toBeNull();
+  test("[positive/negative] ditemukan & null", async () => {
+    prisma.schedule.findUnique.mockResolvedValueOnce({ id: "s1" }).mockResolvedValueOnce(null);
+    await expect(scheduleUseCase.getScheduleById("s1")).resolves.toEqual({ id: "s1" });
+    await expect(scheduleUseCase.getScheduleById("x")).resolves.toBeNull();
   });
 });
 
-describe("createSchedule - conflict detection", () => {
-  test("berhasil kalau gak ada schedule lain yang overlap", async () => {
+describe("createSchedule", () => {
+  test("[positive] tanpa bentrok -> dibuat dengan default & event dikirim", async () => {
     prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.create.mockResolvedValue({ id: "new-1" });
+    prisma.schedule.create.mockResolvedValue({ id: "new" });
 
-    const result = await scheduleUseCase.createSchedule(
-      {
-        roomId: "room-1",
-        deviceId: "device-1",
-        action: "on",
-        scheduledDate: "2026-08-23",
-        startTime: "10:00",
-        endTime: "12:00",
-      },
-      "user-1",
-    );
+    await scheduleUseCase.createSchedule(input({ deviceId: "", endTime: "" }), "user-1");
 
-    expect(result.id).toBe("new-1");
-    expect(prisma.schedule.create).toHaveBeenCalled();
-  });
-
-  test("[negative] 409 kalau overlap waktu di room & device yang sama", async () => {
-    prisma.schedule.findMany.mockResolvedValue([
-      {
-        id: "existing-1",
-        roomId: "room-1",
-        deviceId: "device-1",
-        scheduledDate: new Date("2026-08-23"),
-        startTime: "09:00",
-        endTime: "11:00",
-        repeatType: "none",
-        repeatDays: null,
-      },
-    ]);
-
-    await expect(
-      scheduleUseCase.createSchedule(
-        {
-          roomId: "room-1",
-          deviceId: "device-1",
-          action: "on",
-          scheduledDate: "2026-08-23",
-          startTime: "10:00",
-          endTime: "12:00",
-        },
-        "user-1",
-      ),
-    ).rejects.toThrow(/Jadwal bentrok/);
-
-    expect(prisma.schedule.create).not.toHaveBeenCalled();
-  });
-
-  test("gak conflict kalau room beda, walau waktu sama persis", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.create.mockResolvedValue({ id: "new-2" });
-
-    await scheduleUseCase.createSchedule(
-      {
-        roomId: "room-2",
-        deviceId: "device-1",
-        action: "on",
-        scheduledDate: "2026-08-23",
-        startTime: "10:00",
-        endTime: "12:00",
-      },
-      "user-1",
-    );
-
-    expect(prisma.schedule.create).toHaveBeenCalled();
-  });
-
-  test("[negative] conflict tetap kedetect walau salah satu deviceId null (room-level vs device-level)", async () => {
-    prisma.schedule.findMany.mockResolvedValue([
-      {
-        id: "existing-1",
+    expect(prisma.schedule.findMany).toHaveBeenCalledWith({ where: { status: "active", roomId: "room-1" } });
+    expect(prisma.schedule.create).toHaveBeenCalledWith({
+      data: {
         roomId: "room-1",
         deviceId: null,
-        scheduledDate: new Date("2026-08-23"),
-        startTime: "09:00",
-        endTime: "11:00",
+        action: "on",
+        scheduledDate: new Date("2026-09-20"),
+        startTime: "10:00",
+        endTime: null,
         repeatType: "none",
-        repeatDays: null,
+        repeatDays: undefined,
+        createdById: "user-1",
       },
-    ]);
-
-    await expect(
-      scheduleUseCase.createSchedule(
-        {
-          roomId: "room-1",
-          deviceId: "device-1",
-          action: "on",
-          scheduledDate: "2026-08-23",
-          startTime: "10:00",
-          endTime: "12:00",
-        },
-        "user-1",
-      ),
-    ).rejects.toThrow(/Jadwal bentrok/);
+    });
+    expect(events.emitScheduleCreated).toHaveBeenCalledWith({ id: "new" });
   });
 
-  test("[negative] repeatType default 'none' kalau gak diisi", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.create.mockResolvedValue({ id: "new-3" });
+  test("[negative] overlap jam di device yang sama -> 409 & tidak dibuat", async () => {
+    prisma.schedule.findMany.mockResolvedValue([existing()]);
+    await expect(scheduleUseCase.createSchedule(input(), "u1")).rejects.toMatchObject({
+      status: 409,
+      message: "Jadwal bentrok dengan schedule lain (id: existing-1, 09:00-11:00)",
+    });
+    expect(prisma.schedule.create).not.toHaveBeenCalled();
+    expect(events.emitScheduleCreated).not.toHaveBeenCalled();
+  });
 
-    await scheduleUseCase.createSchedule(
-      {
-        roomId: "room-1",
-        action: "on",
-        scheduledDate: "2026-08-23",
-        startTime: "10:00",
-      },
-      "user-1",
-    );
+  test("[negative] jadwal level room bentrok dengan jadwal level device", async () => {
+    prisma.schedule.findMany.mockResolvedValue([existing({ deviceId: null })]);
+    await expect(scheduleUseCase.createSchedule(input(), "u1")).rejects.toMatchObject({ status: 409 });
+  });
 
-    expect(prisma.schedule.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ repeatType: "none", deviceId: null }),
-      }),
-    );
+  test("[negative] bentrok dengan jadwal harian yang dimulai lebih awal", async () => {
+    prisma.schedule.findMany.mockResolvedValue([
+      existing({ repeatType: "daily", scheduledDate: new Date("2026-09-01T00:00:00") }),
+    ]);
+    await expect(scheduleUseCase.createSchedule(input(), "u1")).rejects.toMatchObject({ status: 409 });
+  });
+
+  test("[negative] bentrok lintas tengah malam (23:00-01:00 vs 00:30)", async () => {
+    prisma.schedule.findMany.mockResolvedValue([existing({ startTime: "23:00", endTime: "01:00" })]);
+    await expect(
+      scheduleUseCase.createSchedule(input({ scheduledDate: "2026-09-21", startTime: "00:30", endTime: null }), "u1"),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  test("[negative] pesan 409 tanpa endTime hanya menampilkan jam mulai", async () => {
+    prisma.schedule.findMany.mockResolvedValue([existing({ startTime: "10:00", endTime: null })]);
+    await expect(scheduleUseCase.createSchedule(input({ endTime: null }), "u1")).rejects.toThrow("(id: existing-1, 10:00)");
+  });
+
+  test.each([
+    ["device berbeda di room yang sama", existing({ deviceId: "device-2" })],
+    ["jam bersebelahan tidak beririsan", existing({ startTime: "12:01", endTime: "13:00" })],
+    ["tanggal berbeda", existing({ scheduledDate: new Date("2026-09-21T00:00:00") })],
+    ["weekly di hari lain", existing({ repeatType: "weekly", repeatDays: [1], scheduledDate: new Date("2026-09-01T00:00:00") })],
+  ])("[positive] tidak bentrok: %s", async (_, other) => {
+    prisma.schedule.findMany.mockResolvedValue([other]);
+    prisma.schedule.create.mockResolvedValue({ id: "ok" });
+    // 2026-09-20 adalah hari Minggu (0)
+    await expect(scheduleUseCase.createSchedule(input(), "u1")).resolves.toEqual({ id: "ok" });
   });
 });
 
 describe("updateSchedule", () => {
-  test("[negative] 404 kalau schedule gak ketemu", async () => {
+  test("[negative] schedule tidak ditemukan -> 404", async () => {
     prisma.schedule.findUnique.mockResolvedValue(null);
-    await expect(
-      scheduleUseCase.updateSchedule("id-gak-ada", {}),
-    ).rejects.toThrow("Schedule tidak ditemukan");
+    await expect(scheduleUseCase.updateSchedule("x", {})).rejects.toMatchObject({ status: 404 });
   });
 
-  test("berhasil update tanpa conflict, merge data lama + baru", async () => {
-    prisma.schedule.findUnique.mockResolvedValue({
-      id: "sch-1",
-      roomId: "room-1",
-      deviceId: "device-1",
-      scheduledDate: new Date("2026-08-23"),
-      startTime: "10:00",
-      endTime: "12:00",
-      repeatType: "none",
-      repeatDays: null,
-    });
-    prisma.schedule.findMany.mockResolvedValue([]); // gak ada schedule lain yang conflict
-    prisma.schedule.update.mockResolvedValue({
-      id: "sch-1",
-      startTime: "14:00",
-    });
-
-    const result = await scheduleUseCase.updateSchedule("sch-1", {
-      startTime: "14:00",
-      endTime: "16:00",
-    });
-    expect(result.startTime).toBe("14:00");
-  });
-
-  test("[negative] tetap 409 kalau update bikin overlap baru sama schedule lain", async () => {
-    prisma.schedule.findUnique.mockResolvedValue({
-      id: "sch-2",
-      roomId: "room-1",
-      deviceId: "device-1",
-      scheduledDate: new Date("2026-08-23"),
-      startTime: "20:00",
-      endTime: "21:00",
-      repeatType: "none",
-      repeatDays: null,
-    });
-    prisma.schedule.findMany.mockResolvedValue([
-      {
-        id: "sch-other",
-        roomId: "room-1",
-        deviceId: "device-1",
-        scheduledDate: new Date("2026-08-23"),
-        startTime: "09:00",
-        endTime: "11:00",
-        repeatType: "none",
-        repeatDays: null,
-      },
-    ]);
-
-    await expect(
-      scheduleUseCase.updateSchedule("sch-2", {
-        startTime: "10:00",
-        endTime: "12:00",
-      }),
-    ).rejects.toThrow(/Jadwal bentrok/);
-  });
-
-  test("excludeId dipakai -> gak conflict sama diri sendiri", async () => {
-    prisma.schedule.findUnique.mockResolvedValue({
-      id: "sch-3",
-      roomId: "room-1",
-      deviceId: "device-1",
-      scheduledDate: new Date("2026-08-23"),
-      startTime: "10:00",
-      endTime: "12:00",
-      repeatType: "none",
-      repeatDays: null,
-    });
+  test("[positive] data lama digabung dengan data baru untuk cek bentrok & diri sendiri dikecualikan", async () => {
+    prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1" }));
     prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.update.mockResolvedValue({ id: "sch-3" });
+    prisma.schedule.update.mockResolvedValue({ id: "s1" });
 
-    await scheduleUseCase.updateSchedule("sch-3", { status: "active" });
-    expect(prisma.schedule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: { not: "sch-3" } }),
-      }),
-    );
+    await scheduleUseCase.updateSchedule("s1", { startTime: "14:00", endTime: "15:00", status: "completed" });
+
+    expect(prisma.schedule.findMany).toHaveBeenCalledWith({
+      where: { status: "active", roomId: "room-1", id: { not: "s1" } },
+    });
+    expect(prisma.schedule.update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: expect.objectContaining({ startTime: "14:00", endTime: "15:00", status: "completed", scheduledDate: undefined }),
+    });
+    expect(events.emitScheduleUpdated).toHaveBeenCalledWith({ id: "s1" });
+  });
+
+  test("[negative] perubahan jam membuat bentrok baru -> 409 tanpa update", async () => {
+    prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s2", startTime: "20:00", endTime: "21:00" }));
+    prisma.schedule.findMany.mockResolvedValue([existing({ id: "other" })]);
+    await expect(scheduleUseCase.updateSchedule("s2", { startTime: "10:00", endTime: "12:00" })).rejects.toMatchObject({ status: 409 });
+    expect(prisma.schedule.update).not.toHaveBeenCalled();
+  });
+
+  test("[positive] endTime null eksplisit menghapus jam selesai", async () => {
+    prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1" }));
+    prisma.schedule.findMany.mockResolvedValue([]);
+    prisma.schedule.update.mockResolvedValue({ id: "s1" });
+    await scheduleUseCase.updateSchedule("s1", { endTime: null });
+    expect(prisma.schedule.update.mock.calls[0][0].data.endTime).toBeNull();
+  });
+
+  // create mengubah "" menjadi null, update meneruskan "" apa adanya -> FK error / data tidak konsisten.
+  test.failing("[BUG] deviceId string kosong saat update seharusnya disimpan sebagai null", async () => {
+    prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1" }));
+    prisma.schedule.findMany.mockResolvedValue([]);
+    prisma.schedule.update.mockResolvedValue({ id: "s1" });
+    await scheduleUseCase.updateSchedule("s1", { deviceId: "", endTime: "" });
+    expect(prisma.schedule.update.mock.calls[0][0].data).toMatchObject({ deviceId: null, endTime: null });
   });
 });
 
 describe("deleteSchedule", () => {
-  test("panggil prisma.schedule.delete dengan id yang benar", async () => {
-    prisma.schedule.delete.mockResolvedValue({ id: "sch-1" });
-    await scheduleUseCase.deleteSchedule("sch-1");
-    expect(prisma.schedule.delete).toHaveBeenCalledWith({
-      where: { id: "sch-1" },
-    });
+  test("[positive] dihapus & event dikirim", async () => {
+    prisma.schedule.delete.mockResolvedValue({ id: "s1" });
+    await scheduleUseCase.deleteSchedule("s1");
+    expect(prisma.schedule.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
+    expect(events.emitScheduleDeleted).toHaveBeenCalledWith("s1");
+  });
+
+  test("[negative] tidak ada (P2025) -> error diteruskan tanpa event", async () => {
+    prisma.schedule.delete.mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }));
+    await expect(scheduleUseCase.deleteSchedule("x")).rejects.toMatchObject({ code: "P2025" });
+    expect(events.emitScheduleDeleted).not.toHaveBeenCalled();
   });
 });
