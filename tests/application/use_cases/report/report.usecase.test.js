@@ -1,5 +1,6 @@
 jest.mock("../../../../src/frameworks/database/prismaClient", () => ({
   prisma: {
+    $queryRaw: jest.fn(),
     room: { findUnique: jest.fn(), count: jest.fn() },
     device: { findUnique: jest.fn(), count: jest.fn() },
     gateway: { count: jest.fn() },
@@ -106,8 +107,8 @@ describe("getDeviceUsage", () => {
 
   test("device valid, gak ada reading sama sekali -> total 0 (bukan null/undefined)", async () => {
     prisma.device.findUnique.mockResolvedValue({ id: "d1", name: "AC 1" });
+    prisma.$queryRaw.mockResolvedValue([]);
     prisma.energyReading.aggregate.mockResolvedValue({
-      _sum: { usageKwh: null },
       _avg: { powerWatt: null },
       _count: 0,
     });

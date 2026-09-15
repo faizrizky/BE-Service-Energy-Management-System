@@ -9,7 +9,7 @@ jest.mock("../../../src/frameworks/chirpstack/client", () => ({
 const { config } = require("../../../src/config/config");
 const logger = require("../../../src/frameworks/helpers/logger");
 const cs = require("../../../src/frameworks/chirpstack/client");
-const sync = require("../../../src/frameworks/chirpstack/devicesync");
+const sync = require("../../../src/frameworks/chirpstack/deviceSync");
 
 const DEV_EUI = "08000000410000e4";
 const httpErr = (status) => Object.assign(new Error(`HTTP ${status}`), { status });

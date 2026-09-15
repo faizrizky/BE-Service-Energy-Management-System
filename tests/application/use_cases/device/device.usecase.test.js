@@ -5,7 +5,7 @@ jest.mock("../../../../src/frameworks/chirpstack/client", () => ({
   getCsDevice: jest.fn(),
   setReportInterval: jest.fn(),
 }));
-// Ejaan disamakan dengan require di device.usecase.js (file di disk: devicesync.js).
+// Ejaan disamakan dengan require di device.usecase.js (file di disk: deviceSync.js).
 jest.mock("../../../../src/frameworks/chirpstack/deviceSync", () => ({
   ensureCsDeviceRegistered: jest.fn(),
   removeCsDevice: jest.fn(),
@@ -126,10 +126,12 @@ afterEach(() => {
 });
 
 describe("struktur modul", () => {
-  // require("…/chirpstack/deviceSync") vs file "devicesync.js": lolos di macOS, crash di Linux/Docker.
-  test.failing("[BUG] path require deviceSync harus sama persis dengan nama file (filesystem case-sensitive)", () => {
+  // Dulu file di disk "devicesync.js" tapi di-require "deviceSync": lolos di macOS, crash di Linux/Docker.
+  test("[positive] nama file deviceSync.js sama persis dengan path require (filesystem case-sensitive)", () => {
     const dir = path.join(__dirname, "../../../../src/frameworks/chirpstack");
-    expect(fs.readdirSync(dir)).toContain("deviceSync.js");
+    const files = fs.readdirSync(dir);
+    expect(files).toContain("deviceSync.js");
+    expect(files).not.toContain("devicesync.js");
   });
 });
 

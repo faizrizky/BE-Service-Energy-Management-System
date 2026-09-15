@@ -15,10 +15,16 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 describe("getReportSummary", () => {
-  test("[positive] selisih max-min per device, diurutkan dari pemakaian terbesar", async () => {
+  test("[positive] pemakaian dari selisih meter (tahan meter reset, bukan max-min), diurutkan dari terbesar", async () => {
     prisma.energyReading.groupBy.mockResolvedValue([
       { deviceId: "d1", _min: { usageKwh: 100, recordedAt: new Date("2026-09-01") }, _max: { usageKwh: 101.2345, recordedAt: new Date("2026-09-10") } },
-      { deviceId: "d2", _min: { usageKwh: 10, recordedAt: new Date("2026-09-01") }, _max: { usageKwh: 30, recordedAt: new Date("2026-09-10") } },
+      // meter d2 sempat reset: max-min = 249,9 padahal konsumsinya 20
+      { deviceId: "d2", _min: { usageKwh: 0.1, recordedAt: new Date("2026-09-01") }, _max: { usageKwh: 250, recordedAt: new Date("2026-09-10") } },
+    ]);
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "d1", hour: new Date("2026-09-02T01:00:00Z"), kwh: 1.234 },
+      { deviceId: "d2", hour: new Date("2026-09-02T01:00:00Z"), kwh: 12 },
+      { deviceId: "d2", hour: new Date("2026-09-03T01:00:00Z"), kwh: 8 },
     ]);
     prisma.device.findMany.mockResolvedValue([
       { id: "d1", eui: "E1", name: "AC", room: { name: "Server", location: "Lt 1" } },
@@ -28,8 +34,9 @@ describe("getReportSummary", () => {
     const rows = await report.getReportSummary({ from: "2026-09-01", to: "2026-09-10" });
 
     expect(rows.map((r) => r.key)).toEqual(["d2", "d1"]);
-    expect(rows[0]).toMatchObject({ deviceName: "Lampu", roomName: "Lobby", usageKwh: 20 });
+    expect(rows[0]).toMatchObject({ deviceName: "Lampu", roomName: "Lobby", startUsageKwh: 0.1, endUsageKwh: 250, usageKwh: 20 });
     expect(rows[1].usageKwh).toBe(1.234);
+    expect(prisma.$queryRaw.mock.calls[0][0].values).toEqual(expect.arrayContaining(["d1", "d2"]));
   });
 
   test("[positive] filter roomId & deviceId diteruskan ke query", async () => {
@@ -55,6 +62,7 @@ describe("getReportSummary", () => {
       { deviceId: "ghost", _min: { usageKwh: null, recordedAt: null }, _max: { usageKwh: null, recordedAt: null } },
     ]);
     prisma.device.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([]);
     const [row] = await report.getReportSummary({ from: "2026-09-01", to: "2026-09-02" });
     expect(row).toMatchObject({ deviceEui: "-", deviceName: "-", roomName: "-", usageKwh: 0 });
   });
@@ -84,9 +92,7 @@ describe("getReportSummary", () => {
 describe("getRoomUsage", () => {
   test("[positive] total pemakaian semua device di room", async () => {
     prisma.room.findUnique.mockResolvedValue({ id: "r1", name: "Server", devices: [{ id: "d1", name: "AC" }, { id: "d2", name: "UPS" }] });
-    prisma.energyReading.aggregate
-      .mockResolvedValueOnce({ _sum: { usageKwh: 2 } })
-      .mockResolvedValueOnce({ _sum: { usageKwh: null } });
+    prisma.$queryRaw.mockResolvedValue([{ deviceId: "d1", hour: new Date("2026-09-13T01:00:00Z"), kwh: 2 }]);
 
     const result = await report.getRoomUsage("r1", "week");
     expect(result.totalUsageKwh).toBe(2);
@@ -100,7 +106,7 @@ describe("getRoomUsage", () => {
     prisma.room.findUnique.mockResolvedValue({ id: "r1", name: "Kosong", devices: [] });
     const result = await report.getRoomUsage("r1", "today");
     expect(result).toMatchObject({ totalUsageKwh: 0, devices: [] });
-    expect(prisma.energyReading.aggregate).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   test("[negative] room tidak ditemukan -> 404, range tidak valid -> 400", async () => {
@@ -122,9 +128,11 @@ describe("getDashboardSummary", () => {
       ],
     );
     prisma.gateway.count.mockResolvedValueOnce(2).mockResolvedValueOnce(1);
-    prisma.energyReading.aggregate
-      .mockResolvedValueOnce({ _sum: { usageKwh: today } })
-      .mockResolvedValueOnce({ _sum: { usageKwh: yesterday } });
+    // Hari ini mulai 2026-09-14 00:00 WIB = 2026-09-13T17:00Z
+    prisma.$queryRaw.mockResolvedValue([
+      ...(today == null ? [] : [{ deviceId: "d1", hour: new Date("2026-09-14T02:00:00Z"), kwh: today }]),
+      ...(yesterday == null ? [] : [{ deviceId: "d1", hour: new Date("2026-09-13T03:00:00Z"), kwh: yesterday }]),
+    ]);
   }
 
   test("[positive] ringkasan energi, gateway, device online/offline", async () => {
@@ -142,6 +150,16 @@ describe("getDashboardSummary", () => {
     expect(result.energyUsage.changePercentFromYesterday).toBe(0);
   });
 
+  test("[edge] konsumsi jam 00:00 WIB masuk hari ini, jam 23:00 WIB masuk kemarin", async () => {
+    mockCounts();
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "d1", hour: new Date("2026-09-13T17:00:00Z"), kwh: 3 },
+      { deviceId: "d1", hour: new Date("2026-09-13T16:00:00Z"), kwh: 2 },
+    ]);
+    const result = await report.getDashboardSummary();
+    expect(result.energyUsage).toEqual({ totalKwh: 3, changePercentFromYesterday: 50 });
+  });
+
   test("[negative] tidak ada reading sama sekali -> total 0", async () => {
     mockCounts({ today: null, yesterday: null });
     const result = await report.getDashboardSummary();
@@ -151,10 +169,10 @@ describe("getDashboardSummary", () => {
 
 describe("getEnergyUsageTimeline", () => {
   test("[positive] 'today' dikelompokkan per jam & statistik dihitung", async () => {
-    prisma.energyReading.findMany.mockResolvedValue([
-      { recordedAt: new Date("2026-09-14T08:10:00+07:00"), usageKwh: 1 },
-      { recordedAt: new Date("2026-09-14T08:40:00+07:00"), usageKwh: 2 },
-      { recordedAt: new Date("2026-09-14T09:05:00+07:00"), usageKwh: 4 },
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "d1", hour: new Date("2026-09-14T08:00:00+07:00"), kwh: 1 },
+      { deviceId: "d2", hour: new Date("2026-09-14T08:00:00+07:00"), kwh: 2 },
+      { deviceId: "d1", hour: new Date("2026-09-14T09:00:00+07:00"), kwh: 4 },
     ]);
     await expect(report.getEnergyUsageTimeline("today")).resolves.toEqual({
       range: "today",
@@ -169,15 +187,15 @@ describe("getEnergyUsageTimeline", () => {
   });
 
   test("[positive] 'last_year' per bulan, 'last_week' per hari", async () => {
-    prisma.energyReading.findMany.mockResolvedValue([
-      { recordedAt: new Date("2026-08-01T12:00:00+07:00"), usageKwh: 1 },
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "d1", hour: new Date("2026-08-01T12:00:00+07:00"), kwh: 1 },
     ]);
     expect((await report.getEnergyUsageTimeline("last_year")).points[0].hour).toBe("2026-08");
     expect((await report.getEnergyUsageTimeline("last_week")).points[0].hour).toBe("2026-08-01");
   });
 
   test("[negative] tanpa data -> semua 0 & points kosong", async () => {
-    prisma.energyReading.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([]);
     await expect(report.getEnergyUsageTimeline("last_month")).resolves.toEqual({
       range: "last_month",
       current: 0,
@@ -191,14 +209,16 @@ describe("getEnergyUsageTimeline", () => {
     await expect(report.getEnergyUsageTimeline("week")).rejects.toMatchObject({ status: 400 });
   });
 
-  // usageKwh adalah angka meter kumulatif (meter_reading/1000), bukan konsumsi per interval.
-  test.failing("[BUG] konsumsi per jam seharusnya selisih meter, bukan penjumlahan angka kumulatif", async () => {
-    prisma.energyReading.findMany.mockResolvedValue([
-      { recordedAt: new Date("2026-09-14T08:00:00+07:00"), usageKwh: 205.0 },
-      { recordedAt: new Date("2026-09-14T08:30:00+07:00"), usageKwh: 205.5 },
+  // usageKwh itu angka meter kumulatif (meter_reading/1000). Dulu reading 205,0 + 205,5
+  // dijumlahin jadi 410,5 kWh; sekarang yang dipake konsumsi (selisih meter) dari SQL.
+  test("[positive] konsumsi per jam dari selisih meter, angka meter mentah nggak dijumlahin", async () => {
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "d1", hour: new Date("2026-09-14T08:00:00+07:00"), kwh: 0.5 },
     ]);
     const { points } = await report.getEnergyUsageTimeline("today");
-    expect(points[0].kwh).toBeCloseTo(0.5);
+    expect(points).toEqual([{ hour: "08.00", kwh: 0.5 }]);
+    expect(prisma.energyReading.findMany).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw.mock.calls[0][0].text).not.toContain('"deviceId" IN');
   });
 });
 
@@ -211,25 +231,42 @@ describe("getTopRiskyRooms", () => {
       devices: i === 6 ? [] : [{ id: `d${i}`, name: `Dev ${i}` }],
     }));
     prisma.room.findMany.mockResolvedValue(rooms);
-    prisma.energyReading.aggregate.mockImplementation(async ({ where }) => {
-      const n = Number(where.deviceId.slice(1));
-      return { _sum: { usageKwh: n * 10 }, _avg: { usageKwh: n }, _max: { usageKwh: n * 2 } };
-    });
+    prisma.$queryRaw.mockResolvedValue(
+      Array.from({ length: 6 }, (_, n) => [
+        { deviceId: `d${n}`, hour: new Date("2026-09-10T01:00:00Z"), kwh: n * 4 },
+        { deviceId: `d${n}`, hour: new Date("2026-09-10T02:00:00Z"), kwh: n * 6 },
+      ]).flat(),
+    );
 
     const result = await report.getTopRiskyRooms("last_week");
     expect(result.map((r) => r.id)).toEqual(["r5", "r4", "r3", "r2", "r1"]);
     expect(result[0]).toMatchObject({
       highestComponent: "Dev 5",
       highestComponentKwh: 50,
-      peakUsageKwh: 10,
-      avgUsageKwh: 5,
+      peakUsageKwh: 30,
+      avgUsageKwh: 0.298, // 50 kWh / (7 × 24 jam)
       totalUsageKwh: 50,
     });
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.energyReading.aggregate).not.toHaveBeenCalled();
+  });
+
+  test("[positive] puncak room = jam dengan jumlah semua device-nya paling gede", async () => {
+    prisma.room.findMany.mockResolvedValue([
+      { id: "r1", name: "R", location: "L", devices: [{ id: "a", name: "AC" }, { id: "b", name: "UPS" }] },
+    ]);
+    prisma.$queryRaw.mockResolvedValue([
+      { deviceId: "a", hour: new Date("2026-09-14T01:00:00Z"), kwh: 1 },
+      { deviceId: "b", hour: new Date("2026-09-14T01:00:00Z"), kwh: 2 },
+      { deviceId: "a", hour: new Date("2026-09-14T02:00:00Z"), kwh: 2.5 },
+    ]);
+    const [room] = await report.getTopRiskyRooms("today");
+    expect(room).toMatchObject({ highestComponent: "AC", highestComponentKwh: 3.5, peakUsageKwh: 3, totalUsageKwh: 5.5 });
   });
 
   test("[negative] semua pemakaian 0 -> highestComponent '-'", async () => {
     prisma.room.findMany.mockResolvedValue([{ id: "r1", name: "R", location: "L", devices: [{ id: "d1", name: "A" }] }]);
-    prisma.energyReading.aggregate.mockResolvedValue({ _sum: { usageKwh: null }, _avg: { usageKwh: null }, _max: { usageKwh: null } });
+    prisma.$queryRaw.mockResolvedValue([]);
     const [room] = await report.getTopRiskyRooms("today");
     expect(room).toMatchObject({ highestComponent: "-", totalUsageKwh: 0 });
   });
