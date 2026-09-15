@@ -1,5 +1,14 @@
 const deviceUseCase = require("../../application/use_cases/device/device.usecase");
 
+/**
+ * Handler list device pake paginasi, bisa difilter search, room, gateway, sama
+ * tanggal dibuat.
+ *
+ * Dipake di:
+ * - device.routes.js → GET /api/devices
+ * - Frontend: devicesApi.list (halaman Device & Schedule),
+ *   devicesClientApi.list (device/client.tsx).
+ */
 async function index(req, res, next) {
   try {
     const {
@@ -26,6 +35,13 @@ async function index(req, res, next) {
   }
 }
 
+/**
+ * Handler detail satu device. Kalo nggak ketemu bales 404.
+ *
+ * Dipake di:
+ * - device.routes.js → GET /api/devices/:id
+ * - Frontend: devicesClientApi.getById (modal detail di halaman Device).
+ */
 async function show(req, res, next) {
   try {
     const device = await deviceUseCase.getDeviceById(req.params.id);
@@ -37,6 +53,13 @@ async function show(req, res, next) {
   }
 }
 
+/**
+ * Handler nambah device (body udah divalidasi createDeviceSchema), bales 201.
+ *
+ * Dipake di:
+ * - device.routes.js → POST /api/devices
+ * - Frontend: devicesClientApi.create (modal tambah device).
+ */
 async function store(req, res, next) {
   try {
     const device = await deviceUseCase.createDevice(req.body);
@@ -46,6 +69,13 @@ async function store(req, res, next) {
   }
 }
 
+/**
+ * Handler ngedit device, termasuk ganti devEUI sama interval.
+ *
+ * Dipake di:
+ * - device.routes.js → PUT /api/devices/:id
+ * - Frontend: devicesClientApi.update (modal edit device).
+ */
 async function update(req, res, next) {
   try {
     const device = await deviceUseCase.updateDevice(req.params.id, req.body);
@@ -55,6 +85,14 @@ async function update(req, res, next) {
   }
 }
 
+/**
+ * Handler hapus device (di ChirpStack juga ikut dihapus), bales 204.
+ *
+ * Dipake di:
+ * - device.routes.js → DELETE /api/devices/:id
+ * - Frontend: devicesClientApi.remove (halaman Device & Room detail, hapus
+ *   satuan/banyak).
+ */
 async function destroy(req, res, next) {
   try {
     await deviceUseCase.deleteDevice(req.params.id);
@@ -64,6 +102,15 @@ async function destroy(req, res, next) {
   }
 }
 
+/**
+ * Handler perintah ON/OFF satu device. Perintahnya dimasukin antrean terus
+ * diproses di belakang; bales 202 kalo masih pending, 200 kalo langsung gagal.
+ *
+ * Dipake di:
+ * - device.routes.js → POST /api/devices/:id/power
+ * - Frontend: devicesClientApi.setPower (switch power di halaman Device &
+ *   Room detail).
+ */
 async function power(req, res, next) {
   try {
     const { action } = req.body;
@@ -80,6 +127,14 @@ async function power(req, res, next) {
   }
 }
 
+/**
+ * Handler buat batalin perintah ON/OFF device yang masih pending.
+ *
+ * Dipake di:
+ * - device.routes.js → POST /api/devices/:id/power/cancel
+ * - Frontend: devicesClientApi.cancelPower (tombol × di switch yang lagi
+ *   pending).
+ */
 async function cancelPower(req, res, next) {
   try {
     const result = await deviceUseCase.cancelRelayCommand(req.params.id);
@@ -89,6 +144,14 @@ async function cancelPower(req, res, next) {
   }
 }
 
+/**
+ * Handler minta telemetry terbaru langsung dari meter (nungguin uplink), terus
+ * disimpen.
+ *
+ * Dipake di:
+ * - device.routes.js → POST /api/devices/:id/telemetry
+ * - Frontend: belom dipanggil.
+ */
 async function ping(req, res, next) {
   try {
     const { timeout } = req.body || {};
@@ -101,6 +164,13 @@ async function ping(req, res, next) {
   }
 }
 
+/**
+ * Handler ganti interval laporan meter (menit) lewat downlink ChirpStack.
+ *
+ * Dipake di:
+ * - device.routes.js → POST /api/devices/:id/interval
+ * - Frontend: belom dipanggil.
+ */
 async function interval(req, res, next) {
   try {
     const result = await deviceUseCase.setDeviceInterval(req.params.id, {
@@ -113,6 +183,13 @@ async function interval(req, res, next) {
   }
 }
 
+/**
+ * Handler ngambil data device langsung dari ChirpStack pake devEUI device EMS.
+ *
+ * Dipake di:
+ * - device.routes.js → GET /api/devices/:id/chirpstack-metadata
+ * - Frontend: belom dipanggil.
+ */
 async function chirpstackMetadata(req, res, next) {
   try {
     const data = await deviceUseCase.getDeviceChirpstackMetadata(req.params.id);
@@ -122,6 +199,13 @@ async function chirpstackMetadata(req, res, next) {
   }
 }
 
+/**
+ * Handler riwayat reading energi device di rentang from–to (maks 90 hari).
+ *
+ * Dipake di:
+ * - device.routes.js → GET /api/devices/:id/telemetry-history
+ * - Frontend: belom dipanggil.
+ */
 async function telemetryHistory(req, res, next) {
   try {
     const { from, to, limit } = req.query;
@@ -136,6 +220,15 @@ async function telemetryHistory(req, res, next) {
   }
 }
 
+/**
+ * Handler list device yang ada di aplikasi ChirpStack plus tanda udah
+ * dipasangin ke device EMS apa belom. Param page/pageSize dikirim tapi belom
+ * dipake use case-nya.
+ *
+ * Dipake di:
+ * - device.routes.js → GET /api/devices/chirpstack-candidates
+ * - Frontend: belom dipanggil.
+ */
 async function chirpstackCandidates(req, res, next) {
   try {
     const { page = 0, pageSize = 50 } = req.query;

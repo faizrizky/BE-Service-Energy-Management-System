@@ -8,6 +8,13 @@ const { config } = require("../../config/config");
 const logger = require("../../frameworks/helpers/logger");
 const { parseWebhookBody } = require("../../frameworks/thingsboard/contract");
 
+/**
+ * Nyocokin header x-webhook-secret secara timing-safe. Ini kode lama
+ * ThingsBoard, udah diganti ChirpStack.
+ *
+ * Dipake di: handleDeviceUpdate (file ini). Udah nggak jalan karena
+ *   config.thingsboard udah dihapus.
+ */
 function isValidSecret(headerValue) {
   const expected = config.thingsboard.webhookSecret;
   const provided = headerValue || "";
@@ -19,6 +26,12 @@ function isValidSecret(headerValue) {
   return crypto.timingSafeEqual(expectedBuf, providedBuf);
 }
 
+/**
+ * Nyatet webhook yang masuk ke tabel WebhookEvent; eventId dobel dilempar biar
+ * bisa di-skip. Ini kode lama ThingsBoard, udah diganti ChirpStack.
+ *
+ * Dipake di: handleDeviceUpdate (file ini).
+ */
 async function recordAuditEvent({
   eventId = null,
   tbDeviceId = null,
@@ -46,6 +59,13 @@ async function recordAuditEvent({
   }
 }
 
+/**
+ * Nerima update status & energi device dari webhook ThingsBoard. Ini kode lama
+ * ThingsBoard, udah diganti ChirpStack.
+ *
+ * Dipake di: thingsboard.routes.js → POST /device-update, tapi router-nya
+ *   nggak dipasang di server.js (nggak bisa diakses).
+ */
 async function handleDeviceUpdate(req, res, next) {
   try {
     if (!isValidSecret(req.headers["x-webhook-secret"])) {

@@ -1,6 +1,12 @@
 /**
  * Logger untuk informasi log dari setiap fungsi yang dijalankan
  */
+
+/**
+ * Waktu sekarang format ISO buat awalan log.
+ *
+ * Dipake di: logger.info, logger.warn, logger.error (file ini).
+ */
 function timestamp() {
   return new Date().toISOString();
 }

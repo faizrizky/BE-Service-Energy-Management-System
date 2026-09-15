@@ -55,20 +55,43 @@ const DEVICE_BUSY_MESSAGE =
 
 const busyDevices = new Set();
 
+/**
+ * Ngecek device lagi dikunci sama perintah relay atau lagi diambil
+ * telemetry-nya apa nggak.
+ *
+ * Dipake di: telemetryPollerJob.js → runTick (device yang lagi sibuk di-skip).
+ */
 function isDeviceBusy(deviceId) {
   return busyDevices.has(deviceId);
 }
 
+/**
+ * Nyoba ngunci device (disimpen di memori). Balikin false kalo udah dikunci
+ * proses lain.
+ *
+ * Dipake di: processRelayCommand (file ini).
+ */
 function acquireDeviceLock(deviceId) {
   if (busyDevices.has(deviceId)) return false;
   busyDevices.add(deviceId);
   return true;
 }
 
+/**
+ * Ngelepas kunci device abis satu percobaan relay selesai.
+ *
+ * Dipake di: processRelayCommand (file ini).
+ */
 function releaseDeviceLock(deviceId) {
   busyDevices.delete(deviceId);
 }
 
+/**
+ * Jalanin fungsi sambil device dikunci, dan kuncinya pasti dilepas lagi. Kalo
+ * device lagi sibuk, lempar 409.
+ *
+ * Dipake di: fetchAndStoreTelemetry (file ini).
+ */
 async function withDeviceLock(deviceId, fn) {
   if (busyDevices.has(deviceId)) throw httpError(DEVICE_BUSY_MESSAGE, 409);
   busyDevices.add(deviceId);
@@ -79,6 +102,13 @@ async function withDeviceLock(deviceId, fn) {
   }
 }
 
+/**
+ * Ngambil device yang wajib udah nyambung ke ChirpStack: 404 kalo nggak ada,
+ * 409 kalo devEUI-nya kosong.
+ *
+ * Dipake di: powerDevice, pingDevice, setDeviceInterval,
+ *   getDeviceChirpstackMetadata (file ini).
+ */
 async function getLinkedDevice(deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) throw httpError("Device tidak ditemukan", 404);
@@ -91,6 +121,13 @@ async function getLinkedDevice(deviceId) {
   return device;
 }
 
+/**
+ * Nentuin downlink boleh di-skip apa nggak karena relainya udah sesuai: status
+ * di DB sama, telemetry masih fresh, dan perintah terakhir sukses (atau udah
+ * ada telemetry baru abis perintah yang gagal).
+ *
+ * Dipake di: attemptRelayCommand (file ini).
+ */
 async function isRelayAlreadyInState(device, action, excludeCommandId = null) {
   if (device.status !== action) return false;
   if (!device.lastSeenAt) return false;
@@ -116,6 +153,12 @@ const UNIQUE_FIELD_LABEL = {
   tbDeviceId: "devEUI ChirpStack",
 };
 
+/**
+ * Ngubah error Prisma P2002 (nilai unik dobel) jadi 409 dengan nama field yang
+ * gampang dipahami. Error lain dibalikin apa adanya.
+ *
+ * Dipake di: createDevice (file ini).
+ */
 function mapPrismaError(err) {
   if (err.code !== "P2002") return err;
 
@@ -126,6 +169,12 @@ function mapPrismaError(err) {
   return httpError(`${label || "Nilai unik"} sudah dipakai device lain`, 409);
 }
 
+/**
+ * List device pake paginasi, bisa filter room, gateway, search (8 kolom), sama
+ * tanggal, plus info perintah pending tiap device.
+ *
+ * Dipake di: device.controller.js → index (GET /api/devices).
+ */
 async function listDevicesPaginated({
   page = 1,
   rowsPerPage = 10,
@@ -203,6 +252,12 @@ async function listDevicesPaginated({
   };
 }
 
+/**
+ * Detail device plus room, gateway, sama perintah pending-nya. Balikin null
+ * kalo nggak ketemu.
+ *
+ * Dipake di: device.controller.js → show (GET /api/devices/:id).
+ */
 async function getDeviceById(id) {
   const device = await prisma.device.findUnique({
     where: { id },
@@ -214,6 +269,13 @@ async function getDeviceById(id) {
   return { ...device, pendingCommand: pendingByDevice.get(id) ?? null };
 }
 
+/**
+ * Nyimpen device baru. Kalo devEUI diisi, daftarin ke ChirpStack (data di DB
+ * dihapus lagi kalo gagal) terus kirim interval laporan ke meter. Abis itu
+ * ngirim event socket device:created.
+ *
+ * Dipake di: device.controller.js → store (POST /api/devices).
+ */
 async function createDevice(data) {
   const devEui = normalizeDevEui(data.tbDeviceId) ?? null;
 
@@ -253,6 +315,13 @@ async function createDevice(data) {
   return device;
 }
 
+/**
+ * Ngedit device: sinkronin nama/devEUI ke ChirpStack, simpen ke DB, kirim
+ * ulang interval kalo interval atau devEUI-nya ganti, terus ngirim event
+ * device:updated.
+ *
+ * Dipake di: device.controller.js → update (PUT /api/devices/:id).
+ */
 async function updateDevice(id, data) {
   const existing = await prisma.device.findUnique({ where: { id } });
   if (!existing) throw httpError("Device tidak ditemukan", 404);
@@ -304,6 +373,13 @@ async function updateDevice(id, data) {
   return device;
 }
 
+/**
+ * Hapus device dari ChirpStack dulu, baru dari DB dalam satu transaksi:
+ * reading dihapus, CommandLog & Schedule dilepas dari device-nya. Terus ngirim
+ * event device:deleted.
+ *
+ * Dipake di: device.controller.js → destroy (DELETE /api/devices/:id).
+ */
 async function deleteDevice(id) {
   const existing = await prisma.device.findUnique({
     where: { id },
@@ -334,12 +410,29 @@ async function deleteDevice(id) {
   return deleted;
 }
 
+/**
+ * Nunggu selama ms milidetik.
+ *
+ * Dipake di: processRelayCommand (jeda antar-retry & nunggu kunci device).
+ */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Ngitung batas waktu perintah relay: waktu request + 30 menit.
+ *
+ * Dipake di: toPendingCommand, toCommandEvent, attemptRelayCommand,
+ *   processRelayCommand (file ini).
+ */
 function commandDeadline(command) {
   return new Date(command.executedAt.getTime() + RELAY_COMMAND_DEADLINE_MS);
 }
 
+/**
+ * Bikin data ringkes perintah pending (id, action, notes, requestedAt,
+ * deadline) buat response API.
+ *
+ * Dipake di: getPendingCommandsByDevice (file ini).
+ */
 function toPendingCommand(command) {
   return {
     id: command.id,
@@ -350,6 +443,13 @@ function toPendingCommand(command) {
   };
 }
 
+/**
+ * Bikin payload event socket device:command, sekalian dipake jadi response API
+ * perintah power.
+ *
+ * Dipake di: requestRelayCommand, cancelRelayCommand, updatePendingCommand
+ *   (file ini).
+ */
 function toCommandEvent(command, deviceName = null) {
   return {
     commandId: command.id,
@@ -365,6 +465,14 @@ function toCommandEvent(command, deviceName = null) {
   };
 }
 
+/**
+ * Ngambil perintah relay yang masih pending buat sekumpulan device, hasilnya
+ * Map deviceId → perintah terbaru.
+ *
+ * Dipake di:
+ * - listDevicesPaginated, getDeviceById (file ini)
+ * - room.usecase.js → listRoomsPaginated, getRoomById, listDevicesInRoom.
+ */
 async function getPendingCommandsByDevice(deviceIds) {
   if (!deviceIds.length) return new Map();
 
@@ -377,8 +485,12 @@ async function getPendingCommandsByDevice(deviceIds) {
 }
 
 /**
- * Ubah status/notes command hanya kalau masih pending, supaya pembatalan
- * dan hasil dari proses lain tidak saling menimpa.
+ * Ubah status/notes CommandLog cuma kalo masih pending (biar nggak tabrakan
+ * sama pembatalan), terus ngirim event device:command. Balikin true kalo ada
+ * yang keubah.
+ *
+ * Dipake di: requestRelayCommand, cancelRelayCommand, completeRelayCommand,
+ *   attemptRelayCommand, processRelayCommand, failRelayCommand (file ini).
  */
 async function updatePendingCommand(command, data, deviceName) {
   const { count } = await prisma.commandLog.updateMany({
@@ -391,6 +503,15 @@ async function updatePendingCommand(command, data, deviceName) {
   return count > 0;
 }
 
+/**
+ * Bikin perintah ON/OFF: batalin perintah pending sebelumnya, simpen
+ * CommandLog pending, kirim event, terus masukin ke antrean BullMQ. Device
+ * yang belom punya devEUI langsung dicatet gagal.
+ *
+ * Dipake di:
+ * - powerDevice (file ini)
+ * - room.usecase.js → powerRoom.
+ */
 async function requestRelayCommand(device, action, options = {}) {
   const { userId = null, scheduleId = null } = options;
   const base = {
@@ -453,11 +574,26 @@ async function requestRelayCommand(device, action, options = {}) {
   return toCommandEvent(command, device.name);
 }
 
+/**
+ * Pintu masuk perintah ON/OFF satu device: pastiin device-nya ada & udah
+ * nyambung ChirpStack, baru bikin perintahnya.
+ *
+ * Dipake di:
+ * - device.controller.js → power (POST /api/devices/:id/power)
+ * - scheduleWorker.js → processMinute (pas schedule jalan).
+ */
 async function powerDevice(deviceId, action, options = {}) {
   const device = await getLinkedDevice(deviceId);
   return requestRelayCommand(device, action, options);
 }
 
+/**
+ * Batalin semua perintah pending punya device. Lempar 404 kalo device-nya
+ * nggak ada atau lagi nggak ada perintah yang jalan.
+ *
+ * Dipake di: device.controller.js → cancelPower (POST
+ *   /api/devices/:id/power/cancel).
+ */
 async function cancelRelayCommand(deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) throw httpError("Device tidak ditemukan", 404);
@@ -487,6 +623,13 @@ async function cancelRelayCommand(deviceId) {
   return { deviceId, status: device.status, cancelled: events };
 }
 
+/**
+ * Nandain perintah sukses: update status device, kirim event device:status,
+ * terus set CommandLog jadi success. Status device tetep di-update walaupun
+ * perintahnya sempet dibatalin, soalnya relai fisiknya emang udah pindah.
+ *
+ * Dipake di: attemptRelayCommand (file ini).
+ */
 async function completeRelayCommand(command, device, notes) {
   const updated = await prisma.device.update({
     where: { id: device.id },
@@ -506,6 +649,12 @@ async function completeRelayCommand(command, device, notes) {
   );
 }
 
+/**
+ * Baca status relai yang asli dari telemetry meter. Balikin null kalo gagal.
+ *
+ * Dipake di: attemptRelayCommand (buat verifikasi pas konfirmasi relay nggak
+ *   nyampe).
+ */
 async function readRelayStateViaTelemetry(device) {
   try {
     const { telemetry } = await runTelemetryFetch(device, {
@@ -520,10 +669,24 @@ async function readRelayStateViaTelemetry(device) {
   }
 }
 
+/**
+ * Ngecek error-nya 408 gara-gara meter nggak bangun (artinya perintah belom
+ * nyampe ke meter).
+ *
+ * Dipake di: attemptRelayCommand (buat nentuin perlu cek telemetry dulu atau
+ *   langsung retry).
+ */
 function isWakeTimeout(err) {
   return err.status === 408 && /wake/i.test(err.message);
 }
 
+/**
+ * Satu kali nyoba kirim relay: skip kalo relai udah sesuai, kirim wake + relay
+ * ke ChirpStack, cek lewat telemetry kalo konfirmasinya ilang, dan catet
+ * progresnya. Balikin true kalo perintahnya udah beres.
+ *
+ * Dipake di: processRelayCommand (file ini).
+ */
 async function attemptRelayCommand(command, device, attempt) {
   if (await isRelayAlreadyInState(device, command.action, command.id)) {
     await completeRelayCommand(
@@ -597,8 +760,12 @@ async function attemptRelayCommand(command, device, attempt) {
 }
 
 /**
- * Dijalankan worker BullMQ. Retry sampai relai berpindah, command dibatalkan/
- * digantikan, atau batas waktu RELAY_COMMAND_DEADLINE_MS habis.
+ * Ngerjain satu perintah dari antrean: coba terus sampe berhasil,
+ * dibatalin/diganti perintah baru, atau lewat batas 30 menit. Kalo device lagi
+ * dipake telemetry, nunggu giliran dulu.
+ *
+ * Dipake di: app.js → startRelayCommandWorker(processRelayCommand) (worker
+ *   BullMQ relay-command).
  */
 async function processRelayCommand(commandId) {
   let attempt = 0;
@@ -658,6 +825,12 @@ async function processRelayCommand(commandId) {
   }
 }
 
+/**
+ * Nandain perintah gagal kalo job antrean error terus sampe attempt terakhir
+ * (misal database lagi down).
+ *
+ * Dipake di: app.js → callback onFailed di startRelayCommandWorker.
+ */
 async function failRelayCommand(commandId, err) {
   const command = await prisma.commandLog.findUnique({
     where: { id: commandId },
@@ -669,7 +842,11 @@ async function failRelayCommand(commandId, err) {
   });
 }
 
-/** Masukkan ulang command pending ke antrean setelah backend restart. */
+/**
+ * Masukin lagi semua perintah pending ke antrean abis backend restart.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 async function recoverPendingRelayCommands() {
   const pending = await prisma.commandLog.findMany({
     where: { status: "pending" },
@@ -685,10 +862,23 @@ async function recoverPendingRelayCommands() {
   }
 }
 
+/**
+ * Ngambil telemetry meter dengan ngunci device dulu (409 kalo lagi sibuk).
+ *
+ * Dipake di:
+ * - pingDevice (file ini)
+ * - telemetryPollerJob.js → pollDevice.
+ */
 async function fetchAndStoreTelemetry(device, options = {}) {
   return withDeviceLock(device.id, () => runTelemetryFetch(device, options));
 }
 
+/**
+ * Inti ngambil telemetry tanpa kunci: ping meter, update lastSeenAt & status
+ * relai, simpen reading energi, terus kirim event device:status.
+ *
+ * Dipake di: fetchAndStoreTelemetry, readRelayStateViaTelemetry (file ini).
+ */
 async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
   const raw = await pingTelemetry(device.tbDeviceId, { timeout });
   const parsed = parseTelemetryResponse(raw);
@@ -726,6 +916,12 @@ async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
   return { device: updated, telemetry: parsed, raw };
 }
 
+/**
+ * Minta telemetry terbaru satu device terus balikin ringkasan status,
+ * telemetry, sama response mentahnya.
+ *
+ * Dipake di: device.controller.js → ping (POST /api/devices/:id/telemetry).
+ */
 async function pingDevice(deviceId, { timeout } = {}) {
   const device = await getLinkedDevice(deviceId);
   const {
@@ -744,6 +940,12 @@ async function pingDevice(deviceId, { timeout } = {}) {
   };
 }
 
+/**
+ * Kirim interval laporan baru ke meter, catet CommandLog set_interval, dan
+ * simpen interval ke DB kalo berhasil.
+ *
+ * Dipake di: device.controller.js → interval (POST /api/devices/:id/interval).
+ */
 async function setDeviceInterval(deviceId, options = {}) {
   const { intervalMinutes, userId = null } = options;
   const device = await getLinkedDevice(deviceId);
@@ -791,6 +993,12 @@ async function setDeviceInterval(deviceId, options = {}) {
   };
 }
 
+/**
+ * Ngecek param from/to riwayat telemetry (wajib diisi, tanggal valid, from ≤
+ * to, maks 90 hari) terus diubah jadi timestamp.
+ *
+ * Dipake di: getDeviceTelemetryHistory (file ini).
+ */
 function parseHistoryRange(from, to) {
   if (!from || !to) {
     throw httpError("Parameter 'from' dan 'to' wajib diisi (ISO date)", 400);
@@ -814,6 +1022,12 @@ function parseHistoryRange(from, to) {
   return { startTs, endTs };
 }
 
+/**
+ * Ngambil data device dari ChirpStack pake devEUI device EMS.
+ *
+ * Dipake di: device.controller.js → chirpstackMetadata (GET
+ *   /api/devices/:id/chirpstack-metadata).
+ */
 async function getDeviceChirpstackMetadata(deviceId) {
   const device = await getLinkedDevice(deviceId);
   const csDevice = await getCsDevice(device.tbDeviceId);
@@ -824,6 +1038,13 @@ async function getDeviceChirpstackMetadata(deviceId) {
   };
 }
 
+/**
+ * Ngambil reading energi device di rentang waktu tertentu, diurutin dari yang
+ * paling lama.
+ *
+ * Dipake di: device.controller.js → telemetryHistory (GET
+ *   /api/devices/:id/telemetry-history).
+ */
 async function getDeviceTelemetryHistory(deviceId, { from, to, limit = 1000 }) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) throw httpError("Device tidak ditemukan", 404);
@@ -851,6 +1072,13 @@ async function getDeviceTelemetryHistory(deviceId, { from, to, limit = 1000 }) {
   };
 }
 
+/**
+ * Ngegabungin list device ChirpStack sama device EMS buat nandain mana yang
+ * udah dipasangin.
+ *
+ * Dipake di: device.controller.js → chirpstackCandidates (GET
+ *   /api/devices/chirpstack-candidates).
+ */
 async function listChirpstackDeviceCandidates() {
   const csResult = await listCsDevices();
   const devEuis = csResult.data.result.map((d) => d.devEui);

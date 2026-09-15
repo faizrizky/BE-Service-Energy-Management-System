@@ -1,5 +1,14 @@
 const gatewayUseCase = require("../../application/use_cases/gateway/gateway.usecase");
 
+/**
+ * Handler list gateway pake paginasi, search & filter tanggal. Status
+ * online-nya dihitung dari device yang nyambung.
+ *
+ * Dipake di:
+ * - gateway.routes.js → GET /api/gateways
+ * - Frontend: gatewaysApi.list (halaman Gateway & dropdown di halaman
+ *   Device), gatewaysClientApi.list (gateway/client.tsx).
+ */
 async function index(req, res, next) {
   try {
     const {
@@ -24,6 +33,14 @@ async function index(req, res, next) {
   }
 }
 
+/**
+ * Handler detail gateway plus device & installer-nya. Kalo nggak ketemu bales
+ * 404.
+ *
+ * Dipake di:
+ * - gateway.routes.js → GET /api/gateways/:id
+ * - Frontend: gatewaysClientApi.getById (detail di halaman Gateway).
+ */
 async function show(req, res, next) {
   try {
     const gateway = await gatewayUseCase.getGatewayById(req.params.id);
@@ -35,6 +52,13 @@ async function show(req, res, next) {
   }
 }
 
+/**
+ * Handler nambah gateway, bales 201.
+ *
+ * Dipake di:
+ * - gateway.routes.js → POST /api/gateways
+ * - Frontend: gatewaysClientApi.create (modal tambah gateway).
+ */
 async function store(req, res, next) {
   try {
     const gateway = await gatewayUseCase.createGateway(req.body);
@@ -44,6 +68,13 @@ async function store(req, res, next) {
   }
 }
 
+/**
+ * Handler ngedit gateway.
+ *
+ * Dipake di:
+ * - gateway.routes.js → PUT /api/gateways/:id
+ * - Frontend: gatewaysClientApi.update (modal edit gateway).
+ */
 async function update(req, res, next) {
   try {
     const gateway = await gatewayUseCase.updateGateway(req.params.id, req.body);
@@ -53,6 +84,13 @@ async function update(req, res, next) {
   }
 }
 
+/**
+ * Handler hapus gateway (ditolak 409 kalo masih ada device-nya), bales 204.
+ *
+ * Dipake di:
+ * - gateway.routes.js → DELETE /api/gateways/:id
+ * - Frontend: gatewaysClientApi.remove (halaman Gateway).
+ */
 async function destroy(req, res, next) {
   try {
     await gatewayUseCase.deleteGateway(req.params.id);

@@ -10,6 +10,11 @@ const connection = {
 
 const scheduleQueue = new Queue('schedule-executor', { connection });
 
+/**
+ * Nambahin job check-due-schedules ke queue BullMQ pas start dan tiap 1 menit.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function initRepeatableJob() {
   scheduleQueue.add('check-due-schedules', {}).catch((err) => {
     logger.error('[Scheduler] Gagal add job awal:', err.message);

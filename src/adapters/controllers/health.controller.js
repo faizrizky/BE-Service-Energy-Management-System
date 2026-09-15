@@ -4,10 +4,24 @@ const { listApplications } = require("../../frameworks/chirpstack/client");
 
 const isProd = process.env.NODE_ENV === "production";
 
+/**
+ * Ngerapiin pesan error health check. Di production cuma nampilin "error" biar
+ * detail infra nggak bocor.
+ *
+ * Dipake di: healthCheck (file ini).
+ */
 function formatError(err) {
   return isProd ? "error" : `error: ${err.message}`;
 }
 
+/**
+ * Ngecek database, Redis, sama middleware ChirpStack. Bales 200 kalo semua
+ * aman, 503 kalo ada yang error.
+ *
+ * Dipake di:
+ * - server.js → GET /health (tanpa login)
+ * - docker-compose.yml → healthcheck container backend.
+ */
 async function healthCheck(req, res) {
   const result = {
     app: "ok",

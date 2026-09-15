@@ -18,12 +18,25 @@ const scheduleRoutes = require("./routes/schedule.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const reportRoutes = require("./routes/report.routes");
 
+/**
+ * Ngalihin request HTTP ke HTTPS (301) kalo FORCE_HTTPS=true, pake header
+ * x-forwarded-proto dari reverse proxy.
+ *
+ * Dipake di: createServer (middleware pertama).
+ */
 function forceHttps(req, res, next) {
   if (!config.app.forceHttps) return next();
   if (req.headers["x-forwarded-proto"] === "https") return next();
   return res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
 }
 
+/**
+ * Ngerakit aplikasi Express: redirect HTTPS, helmet, CORS, parser JSON 1 MB,
+ * hpp, rate limit global, /health, semua route /api, terus handler 404 &
+ * error.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function createServer() {
   const app = express();
 

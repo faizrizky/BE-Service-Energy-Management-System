@@ -1,5 +1,11 @@
 const { prisma } = require('../../../frameworks/database/prismaClient');
 
+/**
+ * Ngambil profil user dari id plus nama role-nya. Kalo user-nya udah nggak
+ * ada, lempar 404.
+ *
+ * Dipake di: auth.controller.js → meController (GET /api/auth/me).
+ */
 async function getMe(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },

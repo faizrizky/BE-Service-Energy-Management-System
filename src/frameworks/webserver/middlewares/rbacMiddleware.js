@@ -1,6 +1,14 @@
 const { prisma } = require("../../database/prismaClient");
 const { logSecurityEvent } = require("../../helpers/securityLog");
 
+/**
+ * Bikin middleware yang ngecek role user (roleId di token) punya permission
+ * module.action di database. Kalo nggak punya, bales 403 & nyatet security
+ * log.
+ *
+ * Dipake di: Semua route dashboard, device, gateway, report, role, room,
+ *   schedule, sama user (kecuali PUT /api/users/me).
+ */
 function checkPermission(module, action) {
   return async (req, res, next) => {
     try {

@@ -13,6 +13,12 @@ const {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * List room pake paginasi: device online/offline, pemakaian 24 jam, status
+ * power, jumlah perintah pending, sama gateway pertamanya.
+ *
+ * Dipake di: room.controller.js → index (GET /api/rooms).
+ */
 async function listRoomsPaginated({
   page = 1,
   rowsPerPage = 10,
@@ -101,6 +107,12 @@ async function listRoomsPaginated({
   };
 }
 
+/**
+ * Ringkasan energi 24 jam satu room: total, rata-rata, puncak, sama device
+ * yang paling boros.
+ *
+ * Dipake di: getRoomUsageSummary, getRoomById (file ini).
+ */
 async function computeRoomUsage(roomId) {
   const devices = await prisma.device.findMany({ where: { roomId } });
   const since = new Date(Date.now() - ONE_DAY_MS);
@@ -143,6 +155,12 @@ async function computeRoomUsage(roomId) {
   };
 }
 
+/**
+ * Ringkasan energi 24 jam satu room. Lempar 404 kalo room-nya nggak ada.
+ *
+ * Dipake di: room.controller.js → usageSummary (GET
+ *   /api/rooms/:id/usage-summary).
+ */
 async function getRoomUsageSummary(roomId) {
   const room = await prisma.room.findUnique({
     where: { id: roomId },
@@ -156,6 +174,13 @@ async function getRoomUsageSummary(roomId) {
   return computeRoomUsage(roomId);
 }
 
+/**
+ * Detail room + ringkasan energi + list device pake paginasi (bisa search &
+ * tanggal). Balikin null kalo room-nya nggak ada.
+ *
+ * Dipake di: room.controller.js → show (GET /api/rooms/:id) dan devices (buat
+ *   ngecek room-nya ada sebelum ngambil device).
+ */
 async function getRoomById(
   id,
   { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
@@ -240,6 +265,12 @@ async function getRoomById(
   };
 }
 
+/**
+ * List device punya satu room pake paginasi: search (angka juga dicocokin ke
+ * interval), pemakaian 24 jam, status power, sama perintah pending.
+ *
+ * Dipake di: room.controller.js → devices (GET /api/rooms/:id/devices).
+ */
 async function listDevicesInRoom(
   roomId,
   { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
@@ -319,6 +350,11 @@ async function listDevicesInRoom(
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
+/**
+ * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
+ *
+ * Dipake di: listRoomsPaginated, listRoomsSummary, getRoomStats (file ini).
+ */
 function isDeviceOnline(device, now) {
   if (!device.lastSeenAt) return false;
   const thresholdMs =
@@ -326,6 +362,13 @@ function isDeviceOnline(device, now) {
   return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
 }
 
+/**
+ * Pemakaian 24 jam satu device: reading terbaru dikurangin reading paling
+ * lama, nggak pernah minus.
+ *
+ * Dipake di: listRoomsPaginated, listDevicesInRoom, listRoomsSummary (file
+ *   ini).
+ */
 async function computeDeviceUsage24h(deviceId) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
@@ -350,6 +393,12 @@ async function computeDeviceUsage24h(deviceId) {
   return Math.max(0, latest.usageKwh - earliest.usageKwh);
 }
 
+/**
+ * Ringkasan semua room tanpa paginasi (gateway, device online/offline,
+ * pemakaian 24 jam, status), bisa difilter nama.
+ *
+ * Dipake di: room.controller.js → summary (GET /api/rooms/summary).
+ */
 async function listRoomsSummary(filter = {}) {
   const rooms = await prisma.room.findMany({
     where: filter.search
@@ -385,8 +434,10 @@ async function listRoomsSummary(filter = {}) {
 }
 
 /**
- * Ringkasan agregat untuk stat card (Dashboard & Rooms). Gateway dianggap
- * online kalau minimal satu device di bawahnya online
+ * Statistik total room, gateway, sama device plus online/offline-nya. Gateway
+ * dianggep online kalo minimal satu device-nya online.
+ *
+ * Dipake di: room.controller.js → stats (GET /api/rooms/stats).
  */
 async function getRoomStats() {
   const now = new Date();
@@ -429,6 +480,12 @@ async function getRoomStats() {
   };
 }
 
+/**
+ * Nyimpen room baru (isCritical default false) terus ngirim event
+ * room:created.
+ *
+ * Dipake di: room.controller.js → store (POST /api/rooms).
+ */
 async function createRoom(data) {
   const room = await prisma.room.create({
     data: {
@@ -445,6 +502,11 @@ async function createRoom(data) {
   return room;
 }
 
+/**
+ * Ngedit data room terus ngirim event room:updated.
+ *
+ * Dipake di: room.controller.js → update (PUT/PATCH /api/rooms/:id).
+ */
 async function updateRoom(id, data) {
   const room = await prisma.room.update({
     where: { id },
@@ -462,6 +524,13 @@ async function updateRoom(id, data) {
   return room;
 }
 
+/**
+ * Hapus room yang udah nggak punya device (409 kalo masih ada), sekalian
+ * CommandLog & Schedule-nya dalam satu transaksi. Terus ngirim event
+ * room:deleted.
+ *
+ * Dipake di: room.controller.js → destroy (DELETE /api/rooms/:id).
+ */
 async function deleteRoom(id) {
   const deviceCount = await prisma.device.count({ where: { roomId: id } });
   if (deviceCount > 0) {
@@ -482,6 +551,13 @@ async function deleteRoom(id) {
   return deleted;
 }
 
+/**
+ * Bikin perintah ON/OFF buat semua device di room lewat antrean, terus balikin
+ * hasil per device plus ringkasan pending/failed. Ngirim event room:power
+ * juga.
+ *
+ * Dipake di: room.controller.js → power (POST /api/rooms/:id/power).
+ */
 async function powerRoom(roomId, action, options = {}) {
   const room = await prisma.room.findUnique({
     where: { id: roomId },
@@ -507,20 +583,41 @@ async function powerRoom(roomId, action, options = {}) {
   return { roomId, action, results, summary };
 }
 
+/**
+ * Nambahin nol di depan angka satu digit (7 → "07").
+ *
+ * Dipake di: toDateStr, toTimeStr (file ini).
+ */
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+/**
+ * Format tanggal lokal jadi YYYY-MM-DD.
+ *
+ * Dipake di: getDeviceLogs (file ini).
+ */
 function toDateStr(date) {
   const d = new Date(date);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/**
+ * Format jam lokal jadi HH:mm.
+ *
+ * Dipake di: getDeviceLogs (file ini).
+ */
 function toTimeStr(date) {
   const d = new Date(date);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+/**
+ * Nyusun kalimat log perintah sesuai status-nya (pending, cancelled, failed,
+ * gateway_offline, sukses manual/terjadwal).
+ *
+ * Dipake di: getDeviceLogs (file ini).
+ */
 function buildLogDescription(log) {
   const actionLabel = log.action === "on" ? "ON" : "OFF";
 
@@ -541,6 +638,13 @@ function buildLogDescription(log) {
     : `Device turned ${actionLabel} manually`;
 }
 
+/**
+ * Riwayat perintah satu device di room tertentu (terbaru duluan) plus PIC &
+ * role yang mencet. Lempar 404 kalo device-nya bukan punya room itu.
+ *
+ * Dipake di: room.controller.js → deviceLogs (GET
+ *   /api/rooms/:id/devices/:deviceId/logs).
+ */
 async function getDeviceLogs(roomId, deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
 

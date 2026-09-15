@@ -3,6 +3,13 @@ const { hashToken } = require("../../../frameworks/helpers/tokenHash");
 const { signAccessToken, issueRefreshToken } = require("./login.usecase");
 const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 
+/**
+ * Ngecek refresh token (ada, belom dicabut, belom kadaluarsa), nyabut token
+ * lama (rotasi), terus ngeluarin pasangan token baru sambil nyatet security
+ * log.
+ *
+ * Dipake di: auth.controller.js → refreshController (POST /api/auth/refresh).
+ */
 async function refreshAccessToken(rawRefreshToken, req) {
   const tokenHash = hashToken(rawRefreshToken);
 

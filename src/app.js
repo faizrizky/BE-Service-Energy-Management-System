@@ -31,6 +31,15 @@ let httpServer;
 let scheduleWorker;
 let relayCommandWorker;
 
+/**
+ * Pintu masuk backend. Ngecek env, nyambungin database & Redis, bikin server
+ * HTTP + Socket.IO, nyalain worker (schedule & relay), ngelanjutin perintah
+ * relay yang masih pending, terus nyalain job retensi & poller telemetry
+ * sebelum mulai listen.
+ *
+ * Dipake di: Dipanggil sekali di baris paling bawah file ini pas `npm start` /
+ *   `npm run dev`.
+ */
 async function bootstrap() {
   try {
     validateConfig();
@@ -72,6 +81,14 @@ async function bootstrap() {
   }
 }
 
+/**
+ * Matiin aplikasi baik-baik: nutup HTTP server, worker & queue BullMQ,
+ * database, sama Redis. Kalo ada yang nyangkut lebih dari 10 detik, langsung
+ * dipaksa keluar.
+ *
+ * Dipake di: Listener sinyal `SIGTERM` & `SIGINT` di file ini (pas Docker stop
+ *   atau Ctrl+C).
+ */
 async function gracefulShutdown(signal) {
   logger.info(
     `[Shutdown] Menerima ${signal}, mematikan aplikasi dengan aman...`,

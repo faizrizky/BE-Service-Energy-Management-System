@@ -1,5 +1,13 @@
 const reportUseCase = require("../../application/use_cases/report/report.usecase");
 
+/**
+ * Handler ringkasan dashboard: energi hari ini vs kemarin, jumlah gateway &
+ * device online/offline.
+ *
+ * Dipake di:
+ * - dashboard.routes.js → GET /api/dashboard/summary
+ * - Frontend: dashboardApi.getSummary (halaman Dashboard & Report).
+ */
 async function dashboardSummary(req, res, next) {
   try {
     const summary = await reportUseCase.getDashboardSummary();
@@ -9,6 +17,14 @@ async function dashboardSummary(req, res, next) {
   }
 }
 
+/**
+ * Handler pemakaian energi satu device buat range today/week/month (default
+ * today).
+ *
+ * Dipake di:
+ * - report.routes.js → GET /api/reports/devices/:id/usage
+ * - Frontend: belom dipanggil.
+ */
 async function deviceUsage(req, res, next) {
   try {
     const range = req.query.range || "today";
@@ -19,6 +35,14 @@ async function deviceUsage(req, res, next) {
   }
 }
 
+/**
+ * Handler pemakaian energi tiap device di satu room buat range
+ * today/week/month.
+ *
+ * Dipake di:
+ * - report.routes.js → GET /api/reports/rooms/:id/usage
+ * - Frontend: belom dipanggil.
+ */
 async function roomUsage(req, res, next) {
   try {
     const range = req.query.range || "today";
@@ -29,6 +53,15 @@ async function roomUsage(req, res, next) {
   }
 }
 
+/**
+ * Handler tabel laporan: pemakaian per device (selisih meter) dengan filter
+ * room/device & tanggal from–to.
+ *
+ * Dipake di:
+ * - report.routes.js → GET /api/reports/summary
+ * - Frontend: reportApi.getSummary (report/page.tsx),
+ *   reportClientApi.getSummary (report/client.tsx).
+ */
 async function reportSummary(req, res, next) {
   try {
     const { roomId, deviceId, from, to } = req.query;
@@ -44,6 +77,14 @@ async function reportSummary(req, res, next) {
   }
 }
 
+/**
+ * Handler export reading energi jadi file CSV, XLSX, atau PDF. Kalo format
+ * nggak diisi, bales JSON aja.
+ *
+ * Dipake di:
+ * - report.routes.js → GET /api/reports/export
+ * - Frontend: reportClientApi.export (tombol export di halaman Report).
+ */
 async function exportEnergy(req, res, next) {
   try {
     const { roomId, deviceId, from, to, format } = req.query;
@@ -93,6 +134,16 @@ async function exportEnergy(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * Handler data grafik energi per jam/hari/bulan buat range today, last_week,
+ * last_month, last_year.
+ *
+ * Dipake di:
+ * - dashboard.routes.js → GET /api/dashboard/energy-usage-timeline
+ * - Frontend: dashboardApi.getEnergyUsageTimeline (halaman Dashboard &
+ *   Report).
+ */
 async function energyUsageTimeline(req, res, next) {
   try {
     const range = req.query.range || "today";
@@ -103,6 +154,13 @@ async function energyUsageTimeline(req, res, next) {
   }
 }
 
+/**
+ * Handler 5 room yang pemakaian energinya paling gede di range tertentu.
+ *
+ * Dipake di:
+ * - dashboard.routes.js → GET /api/dashboard/top-risky-rooms
+ * - Frontend: dashboardApi.getTopRiskyRooms (halaman Dashboard).
+ */
 async function topRiskyRooms(req, res, next) {
   try {
     const range = req.query.range || "today";
@@ -113,6 +171,14 @@ async function topRiskyRooms(req, res, next) {
   }
 }
 
+/**
+ * Handler list schedule yang lagi aktif atau yang bakal jalan, buat kartu di
+ * dashboard.
+ *
+ * Dipake di:
+ * - dashboard.routes.js → GET /api/dashboard/schedules
+ * - Frontend: dashboardApi.getActiveSchedules (halaman Dashboard).
+ */
 async function activeSchedules(req, res, next) {
   try {
     const status = req.query.status || "active";

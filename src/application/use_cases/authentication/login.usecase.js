@@ -8,6 +8,14 @@ const {
 } = require("../../../frameworks/helpers/tokenHash");
 const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 
+/**
+ * Bikin JWT access token isinya id, roleId, sama roleName, masa berlakunya
+ * ngikutin JWT_EXPIRES_IN.
+ *
+ * Dipake di:
+ * - login (file ini)
+ * - refreshToken.usecase.js → refreshAccessToken.
+ */
 function signAccessToken(user) {
   return jwt.sign(
     { id: user.id, roleId: user.roleId, roleName: user.role.name },
@@ -16,6 +24,14 @@ function signAccessToken(user) {
   );
 }
 
+/**
+ * Bikin refresh token acak, nyimpen hash-nya ke tabel RefreshToken (berlaku
+ * JWT_REFRESH_EXPIRES_DAYS hari), terus balikin token aslinya.
+ *
+ * Dipake di:
+ * - login (file ini)
+ * - refreshToken.usecase.js → refreshAccessToken.
+ */
 async function issueRefreshToken(userId) {
   const rawToken = generateRawToken();
   const expiresAt = new Date(
@@ -29,6 +45,13 @@ async function issueRefreshToken(userId) {
   return rawToken;
 }
 
+/**
+ * Proses login pake username atau email: cek akun lagi dikunci apa nggak,
+ * cocokin password, ngitung salah password (akun dikunci kalo kebanyakan),
+ * nyatet security log, terus ngeluarin token.
+ *
+ * Dipake di: auth.controller.js → loginController (POST /api/auth/login).
+ */
 async function login({ username, password }, req) {
   const { maxFailedAttempts, lockoutMinutes } = config.loginSecurity;
 

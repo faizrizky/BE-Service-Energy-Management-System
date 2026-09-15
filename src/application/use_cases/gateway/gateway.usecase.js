@@ -7,6 +7,12 @@ const {
 
 const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
+/**
+ * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
+ * (Fungsi yang sama juga ada di room.usecase.js sama report.usecase.js.)
+ *
+ * Dipake di: computeGatewayStatus (file ini).
+ */
 function isDeviceOnline(device, now) {
   if (!device.lastSeenAt) return false;
   const thresholdMs =
@@ -14,10 +20,21 @@ function isDeviceOnline(device, now) {
   return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
 }
 
+/**
+ * Status gateway: online kalo minimal ada satu device-nya yang online.
+ *
+ * Dipake di: listGatewaysPaginated, getGatewayById (file ini).
+ */
 function computeGatewayStatus(device, now) {
   return device.some((d) => isDeviceOnline(d, now)) ? "online" : "offline";
 }
 
+/**
+ * List gateway pake paginasi, bisa search (nama, EUI, model, simcard, sumber
+ * daya) & filter tanggal, plus status online/offline.
+ *
+ * Dipake di: gateway.controller.js → index (GET /api/gateways).
+ */
 async function listGatewaysPaginated({
   page = 1,
   rowsPerPage = 10,
@@ -81,6 +98,12 @@ async function listGatewaysPaginated({
   };
 }
 
+/**
+ * Detail gateway plus device, installer, sama status-nya. Balikin null kalo
+ * nggak ketemu.
+ *
+ * Dipake di: gateway.controller.js → show (GET /api/gateways/:id).
+ */
 async function getGatewayById(id) {
   const gateway = await prisma.gateway.findUnique({
     where: { id },
@@ -97,6 +120,12 @@ async function getGatewayById(id) {
   };
 }
 
+/**
+ * Nyimpen gateway baru (tanggal instalasi diubah ke Date) terus ngirim event
+ * gateway:created dengan status offline.
+ *
+ * Dipake di: gateway.controller.js → store (POST /api/gateways).
+ */
 async function createGateway(data) {
   const gateway = await prisma.gateway.create({
     data: {
@@ -117,6 +146,12 @@ async function createGateway(data) {
   return gateway;
 }
 
+/**
+ * Ngedit gateway. installedById string kosong artinya installer-nya dilepas.
+ * Terus ngirim event gateway:updated.
+ *
+ * Dipake di: gateway.controller.js → update (PUT /api/gateways/:id).
+ */
 async function updateGateway(id, data) {
   const gateway = await prisma.gateway.update({
     where: { id },
@@ -140,6 +175,12 @@ async function updateGateway(id, data) {
   return gateway;
 }
 
+/**
+ * Hapus gateway kalo udah nggak punya device (409 kalo masih ada), terus
+ * ngirim event gateway:deleted.
+ *
+ * Dipake di: gateway.controller.js → destroy (DELETE /api/gateways/:id).
+ */
 async function deleteGateway(id) {
   const deviceCount = await prisma.device.count({ where: { gatewayId: id } });
   if (deviceCount > 0) {

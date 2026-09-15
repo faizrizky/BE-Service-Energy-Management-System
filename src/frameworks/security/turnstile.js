@@ -1,6 +1,14 @@
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
 
+/**
+ * Verifikasi token captcha Cloudflare Turnstile (timeout 5 detik). Balikin
+ * false kalo token kosong, ditolak, atau request-nya gagal.
+ *
+ * Dipake di:
+ * - middlewares/requireCaptcha.js → requireCaptcha
+ * - webserver/requireCaptcha.js (duplikat lama, nggak dipake).
+ */
 async function verifyTurnstile(token, remoteIp) {
   if (!token) return false;
   try {

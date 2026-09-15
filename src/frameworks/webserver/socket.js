@@ -5,6 +5,12 @@ const logger = require("../helpers/logger");
 
 let io;
 
+/**
+ * Pasang Socket.IO ke HTTP server, aturan CORS-nya sama kayak REST, dan
+ * login-nya pake JWT dari handshake.auth.token.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
@@ -44,6 +50,11 @@ function initSocket(httpServer) {
   return io;
 }
 
+/**
+ * Ngambil instance Socket.IO. Lempar error kalo initSocket belom dipanggil.
+ *
+ * Dipake di: socket-events.js → emit.
+ */
 function getIO() {
   if (!io) {
     throw new Error(

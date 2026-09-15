@@ -14,6 +14,13 @@ const RANGE_DAYS = {
   last_year: 365,
 };
 
+/**
+ * Laporan pemakaian per device di rentang tanggal: reading tertinggi dikurangi
+ * terendah, diurutin dari yang paling boros. Tanggal (maks 366 hari) sama
+ * room/device-nya dicek dulu.
+ *
+ * Dipake di: report.controller.js → reportSummary (GET /api/reports/summary).
+ */
 async function getReportSummary({ roomId, deviceId, from, to }) {
   const fromDate = parseDateStrict(from, "from");
   const toDate = parseDateStrict(to, "to");
@@ -94,6 +101,11 @@ async function getReportSummary({ roomId, deviceId, from, to }) {
     .sort((a, b) => b.usageKwh - a.usageKwh);
 }
 
+/**
+ * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
+ *
+ * Dipake di: getDashboardSummary (file ini).
+ */
 function isDeviceOnline(device, now) {
   if (!device.lastSeenAt) return false;
   const thresholdMs =
@@ -101,6 +113,12 @@ function isDeviceOnline(device, now) {
   return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
 }
 
+/**
+ * Ngubah range today/week/month jadi rentang waktu start–end. Lempar 400 kalo
+ * range-nya nggak dikenal.
+ *
+ * Dipake di: getDeviceUsage, getRoomUsage, getDashboardSummary (file ini).
+ */
 function getRangeBounds(range) {
   const now = new Date();
   const start = new Date(now);
@@ -127,6 +145,12 @@ function getRangeBounds(range) {
   return { start, end: now };
 }
 
+/**
+ * Ngecek tanggal format YYYY-MM-DD yang beneran ada di kalender terus diubah
+ * ke Date lokal. Lempar 400 kalo nggak valid.
+ *
+ * Dipake di: getReportSummary, exportEnergyReport (file ini).
+ */
 function parseDateStrict(value, label) {
   if (!value || typeof value !== "string") {
     const err = new Error(
@@ -167,6 +191,13 @@ function parseDateStrict(value, label) {
   return date;
 }
 
+/**
+ * Total pemakaian, rata-rata daya, sama jumlah reading satu device buat range
+ * today/week/month.
+ *
+ * Dipake di: report.controller.js → deviceUsage (GET
+ *   /api/reports/devices/:id/usage).
+ */
 async function getDeviceUsage(deviceId, range) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) {
@@ -196,6 +227,13 @@ async function getDeviceUsage(deviceId, range) {
   };
 }
 
+/**
+ * Pemakaian energi tiap device di satu room plus totalnya buat range
+ * today/week/month.
+ *
+ * Dipake di: report.controller.js → roomUsage (GET
+ *   /api/reports/rooms/:id/usage).
+ */
 async function getRoomUsage(roomId, range) {
   const room = await prisma.room.findUnique({
     where: { id: roomId },
@@ -248,6 +286,13 @@ async function getRoomUsage(roomId, range) {
   };
 }
 
+/**
+ * Ringkasan dashboard: kWh hari ini & persen perubahan dari kemarin, jumlah
+ * gateway online (dari kolom status), sama device online/offline.
+ *
+ * Dipake di: report.controller.js → dashboardSummary (GET
+ *   /api/dashboard/summary).
+ */
 async function getDashboardSummary() {
   const now = new Date();
   const { start: todayStart, end: todayEnd } = getRangeBounds("today");
@@ -304,6 +349,12 @@ async function getDashboardSummary() {
   };
 }
 
+/**
+ * Bikin label kelompok waktu reading: "HH.00" per jam, "YYYY-MM-DD" per hari,
+ * atau "YYYY-MM" per bulan.
+ *
+ * Dipake di: getEnergyUsageTimeline (file ini).
+ */
 function bucketKey(date, granularity) {
   const d = new Date(date);
   if (granularity === "hour")
@@ -313,6 +364,13 @@ function bucketKey(date, granularity) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/**
+ * Data grafik energi: reading dikelompokin per jam/hari/bulan sesuai range,
+ * plus nilai terakhir, puncak, sama rata-ratanya.
+ *
+ * Dipake di: report.controller.js → energyUsageTimeline (GET
+ *   /api/dashboard/energy-usage-timeline).
+ */
 async function getEnergyUsageTimeline(range) {
   const days = RANGE_DAYS[range];
   if (!days) {
@@ -354,6 +412,13 @@ async function getEnergyUsageTimeline(range) {
   };
 }
 
+/**
+ * Ngitung pemakaian total, rata-rata, puncak, sama komponen paling boros tiap
+ * room, terus ambil 5 room tertinggi.
+ *
+ * Dipake di: report.controller.js → topRiskyRooms (GET
+ *   /api/dashboard/top-risky-rooms).
+ */
 async function getTopRiskyRooms(range) {
   const days = RANGE_DAYS[range];
   if (!days) {
@@ -423,6 +488,13 @@ async function getTopRiskyRooms(range) {
     .slice(0, 5);
 }
 
+/**
+ * List maks 20 schedule yang aktif (berulang atau udah mulai) atau upcoming
+ * (sekali jalan di masa depan), formatnya buat kartu dashboard.
+ *
+ * Dipake di: report.controller.js → activeSchedules (GET
+ *   /api/dashboard/schedules).
+ */
 async function getActiveSchedules(status) {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -457,6 +529,12 @@ async function getActiveSchedules(status) {
   }));
 }
 
+/**
+ * Ngambil semua reading energi di rentang tanggal (bisa filter room/device)
+ * dalam bentuk baris yang siap di-export.
+ *
+ * Dipake di: report.controller.js → exportEnergy (GET /api/reports/export).
+ */
 async function exportEnergyReport({ roomId, deviceId, from, to }) {
   const fromDate = parseDateStrict(from, "from");
   const toDate = parseDateStrict(to, "to");
@@ -515,6 +593,11 @@ async function exportEnergyReport({ roomId, deviceId, from, to }) {
   }));
 }
 
+/**
+ * Ngubah baris export jadi teks CSV.
+ *
+ * Dipake di: report.controller.js → exportEnergy (format=csv).
+ */
 function toCsv(rows) {
   const header = "recordedAt,roomName,deviceName,powerWatt,usageKwh";
   const lines = rows.map((r) =>
@@ -529,6 +612,11 @@ function toCsv(rows) {
   return [header, ...lines].join("\n");
 }
 
+/**
+ * Hapus reading energi yang umurnya lebih dari ENERGY_RETENTION_DAYS hari.
+ *
+ * Dipake di: retentionJob.js → runPrune (pas start & tiap 24 jam).
+ */
 async function pruneOldReadings() {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - config.energyRetention.days);
@@ -540,6 +628,11 @@ async function pruneOldReadings() {
   return { deletedCount: result.count, cutoff };
 }
 
+/**
+ * Ngubah baris export jadi file Excel (buffer).
+ *
+ * Dipake di: report.controller.js → exportEnergy (format=xlsx).
+ */
 async function toXlsx(rows) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Energy Report");
@@ -562,6 +655,12 @@ async function toXlsx(rows) {
   return workbook.xlsx.writeBuffer();
 }
 
+/**
+ * Ngubah baris export jadi file PDF A4 landscape (buffer), otomatis pindah
+ * halaman kalo penuh.
+ *
+ * Dipake di: report.controller.js → exportEnergy (format=pdf).
+ */
 async function toPdf(rows) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({

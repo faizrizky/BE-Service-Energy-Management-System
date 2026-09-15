@@ -6,6 +6,12 @@ const {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Jalanin pembersihan reading lama terus nyatet hasil/error ke log tanpa
+ * ngelempar error.
+ *
+ * Dipake di: startRetentionJob (pas start & tiap 24 jam).
+ */
 async function runPrune() {
   try {
     const { deletedCount, cutoff } = await pruneOldReadings();
@@ -19,6 +25,11 @@ async function runPrune() {
   }
 }
 
+/**
+ * Jalanin retensi energy_readings sekali pas start, terus tiap 24 jam.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function startRetentionJob() {
   runPrune();
   setInterval(runPrune, ONE_DAY_MS);

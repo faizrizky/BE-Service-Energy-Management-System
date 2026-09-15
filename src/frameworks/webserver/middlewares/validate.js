@@ -1,3 +1,10 @@
+/**
+ * Bikin middleware validasi zod buat req.body (atau source lain): bales 400
+ * plus daftar error per field, atau ganti req[source] pake data hasil parse.
+ *
+ * Dipake di: Route yang nerima body di routes auth, device, gateway, role,
+ *   room, schedule, sama user.
+ */
 function validate(schema, source = "body") {
   return (req, res, next) => {
     const result = schema.safeParse(req[source]);

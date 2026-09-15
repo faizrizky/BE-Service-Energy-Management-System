@@ -1,10 +1,13 @@
-/**
- * @param {import('express').Request} req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
- */
 const roleUseCase = require("../../application/use_cases/role/role.usecase");
 
+/**
+ * Handler list role pake paginasi, plus permission & jumlah user-nya.
+ *
+ * Dipake di:
+ * - role.routes.js → GET /api/roles
+ * - Frontend: rolesApi.list (halaman Role), rolesApi.listSummary (dropdown
+ *   role di halaman User), rolesClientApi.list (role/client.tsx).
+ */
 async function index(req, res, next) {
   try {
     const { page = 1, rowsPerPage = 10, search } = req.query;
@@ -19,6 +22,13 @@ async function index(req, res, next) {
   }
 }
 
+/**
+ * Handler detail role plus permission-nya. Kalo nggak ketemu bales 404.
+ *
+ * Dipake di:
+ * - role.routes.js → GET /api/roles/:id
+ * - Frontend: belom dipanggil halaman mana pun.
+ */
 async function show(req, res, next) {
   try {
     const role = await roleUseCase.getRoleById(req.params.id);
@@ -29,6 +39,13 @@ async function show(req, res, next) {
   }
 }
 
+/**
+ * Handler nambah role sekalian pasang permission-nya, bales 201.
+ *
+ * Dipake di:
+ * - role.routes.js → POST /api/roles
+ * - Frontend: rolesClientApi.create (modal tambah role).
+ */
 async function store(req, res, next) {
   try {
     const role = await roleUseCase.createRole(req.body);
@@ -38,6 +55,14 @@ async function store(req, res, next) {
   }
 }
 
+/**
+ * Handler ngedit role. Kalo permissionIds dikirim, permission lama diganti
+ * semua.
+ *
+ * Dipake di:
+ * - role.routes.js → PUT /api/roles/:id
+ * - Frontend: rolesClientApi.update (modal edit role).
+ */
 async function update(req, res, next) {
   try {
     const role = await roleUseCase.updateRole(req.params.id, req.body);
@@ -47,6 +72,13 @@ async function update(req, res, next) {
   }
 }
 
+/**
+ * Handler hapus role, bales 204.
+ *
+ * Dipake di:
+ * - role.routes.js → DELETE /api/roles/:id
+ * - Frontend: rolesClientApi.remove (halaman Role).
+ */
 async function destroy(req, res, next) {
   try {
     await roleUseCase.deleteRole(req.params.id);
@@ -56,6 +88,13 @@ async function destroy(req, res, next) {
   }
 }
 
+/**
+ * Handler daftar semua permission (module + action) buat form role.
+ *
+ * Dipake di:
+ * - role.routes.js → GET /api/roles/permissions
+ * - Frontend: rolesApi.listPermissions (halaman Role).
+ */
 async function permissionsList(req, res, next) {
   try {
     const permissions = await roleUseCase.listPermissions();

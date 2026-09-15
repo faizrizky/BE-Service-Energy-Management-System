@@ -59,6 +59,13 @@ const config = {
   },
 };
 
+/**
+ * Ngecek env wajib (DATABASE_URL, JWT_SECRET, CHIRPSTACK_MIDDLEWARE_URL,
+ * CHIRPSTACK_APPLICATION_ID) udah keisi. Kalo ada yang kosong, lempar error
+ * sambil nyebutin env mana aja.
+ *
+ * Dipake di: app.js → bootstrap (paling awal, sebelum nyambung ke apa-apa).
+ */
 function validateConfig() {
   const required = [
     ["DATABASE_URL", config.database.url],

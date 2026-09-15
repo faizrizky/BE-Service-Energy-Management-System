@@ -17,6 +17,12 @@ const SAFE_USER_SELECT = {
   email: true,
 };
 
+/**
+ * Bikin filter Prisma buat status active (berulang atau udah mulai) atau
+ * upcoming (sekali jalan setelah hari ini). Balikin null buat status lain.
+ *
+ * Dipake di: listSchedulesPaginated (file ini).
+ */
 function buildStatusWhere(status) {
   if (status !== "active" && status !== "upcoming") return null;
 
@@ -40,6 +46,12 @@ function buildStatusWhere(status) {
   };
 }
 
+/**
+ * List schedule pake paginasi, bisa filter room, status, tanggal, sama search
+ * (nama room/device, EUI, tipe device).
+ *
+ * Dipake di: schedule.controller.js → index (GET /api/schedules).
+ */
 async function listSchedulesPaginated(filter = {}) {
   const {
     roomId,
@@ -105,12 +117,25 @@ async function listSchedulesPaginated(filter = {}) {
   };
 }
 
+/**
+ * Dua schedule dianggep satu cakupan kalo room-nya sama dan device-nya sama,
+ * atau salah satunya berlaku buat satu room penuh.
+ *
+ * Dipake di: assertNoScheduleConflict (file ini).
+ */
 function scopeOverlap(a, b) {
   if (a.roomId !== b.roomId) return false;
   if (!a.deviceId || !b.deviceId) return true;
   return a.deviceId === b.deviceId;
 }
 
+/**
+ * Lempar 409 kalo ada schedule aktif lain di room yang sama yang tabrakan
+ * cakupan, tanggal, dan jamnya. excludeId dipake biar schedule nggak dianggep
+ * tabrakan sama dirinya sendiri pas update.
+ *
+ * Dipake di: createSchedule, updateSchedule (file ini).
+ */
 async function assertNoScheduleConflict(data, excludeId = null) {
   const candidates = await prisma.schedule.findMany({
     where: {
@@ -153,6 +178,12 @@ async function assertNoScheduleConflict(data, excludeId = null) {
   }
 }
 
+/**
+ * Detail schedule plus room, device, sama pembuatnya (tanpa data sensitif).
+ * Balikin null kalo nggak ketemu.
+ *
+ * Dipake di: schedule.controller.js → show (GET /api/schedules/:id).
+ */
 async function getScheduleById(id) {
   return prisma.schedule.findUnique({
     where: { id },
@@ -164,6 +195,12 @@ async function getScheduleById(id) {
   });
 }
 
+/**
+ * Bikin schedule abis dicek nggak bentrok (deviceId/endTime kosong disimpen
+ * null, repeatType default none), terus ngirim event schedule:created.
+ *
+ * Dipake di: schedule.controller.js → store (POST /api/schedules).
+ */
 async function createSchedule(data, userId) {
   const scheduledDate = new Date(data.scheduledDate);
 
@@ -186,6 +223,12 @@ async function createSchedule(data, userId) {
   return schedule;
 }
 
+/**
+ * Gabungin data lama sama perubahan buat cek bentrok, simpen, terus ngirim
+ * event schedule:updated. Lempar 404 kalo schedule-nya nggak ada.
+ *
+ * Dipake di: schedule.controller.js → update (PUT /api/schedules/:id).
+ */
 async function updateSchedule(id, data) {
   const existing = await prisma.schedule.findUnique({ where: { id } });
   if (!existing) {
@@ -229,6 +272,11 @@ async function updateSchedule(id, data) {
   return schedule;
 }
 
+/**
+ * Hapus schedule terus ngirim event schedule:deleted.
+ *
+ * Dipake di: schedule.controller.js → destroy (DELETE /api/schedules/:id).
+ */
 async function deleteSchedule(id) {
   const deleted = await prisma.schedule.delete({ where: { id } });
   emitScheduleDeleted(deleted.id);

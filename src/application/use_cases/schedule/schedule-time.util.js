@@ -1,20 +1,42 @@
 const MINUTES_PER_DAY = 24 * 60;
 const WEEK_LENGTH_DAYS = 7;
 
+/**
+ * Ngubah jam "HH:mm" jadi jumlah menit dari jam 00:00.
+ *
+ * Dipake di: isCrossMidnight, toDailyIntervals (file ini).
+ */
 function timeToMinutes(time) {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
 }
 
+/**
+ * Ngebalik action: on jadi off, off jadi on. Dipake pas endTime schedule udah
+ * nyampe.
+ *
+ * Dipake di: scheduleWorker.js → processMinute.
+ */
 function invertAction(action) {
   return action === "on" ? "off" : "on";
 }
 
+/**
+ * Buang jam dari tanggal (jadi jam 00:00 waktu lokal).
+ *
+ * Dipake di: toDateKey, addDays, getOccupiedDates, getScheduleStartDate,
+ *   isOccurringOnDate (file ini).
+ */
 function toDateOnly(date) {
   const d = new Date(date);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+/**
+ * Bikin kunci tanggal "YYYY-MM-DD" (waktu lokal) buat bandingin hari.
+ *
+ * Dipake di: isOccurringOnDate (file ini).
+ */
 function toDateKey(date) {
   const d = toDateOnly(date);
   const y = d.getFullYear();
@@ -23,6 +45,11 @@ function toDateKey(date) {
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * Nambah/ngurangin beberapa hari dari tanggal (hasilnya tanpa jam).
+ *
+ * Dipake di: getOccupiedDates, occurrenceDatesOverlap, isEndDue (file ini).
+ */
 function addDays(date, amount) {
   const result = toDateOnly(date);
   result.setDate(result.getDate() + amount);
@@ -30,8 +57,10 @@ function addDays(date, amount) {
 }
 
 /**
- * Schedule dianggep "cross-midnight" kalau endTime-nya <= startTime,
- * artinya rentang waktunya nyebrang lewat jam 00:00 (mis. 23:00 -> 01:00).
+ * Schedule dianggep nyebrang tengah malem kalo endTime ≤ startTime (misal
+ * 23:00 → 01:00).
+ *
+ * Dipake di: getOccupiedDates, isEndDue (file ini).
  */
 function isCrossMidnight(schedule) {
   if (!schedule.endTime) return false;
@@ -39,8 +68,10 @@ function isCrossMidnight(schedule) {
 }
 
 /**
- * Tanggal kalender yang dipake sama schedule repeatType 'none',
- * termasuk hari berikutnya kalo rentang jamnya cross-midnight.
+ * Tanggal yang kepake sama schedule sekali jalan (repeatType none), termasuk
+ * besoknya kalo nyebrang tengah malem.
+ *
+ * Dipake di: isOccurringOnDate, occurrenceDatesOverlap (file ini).
  */
 function getOccupiedDates(schedule) {
   const base = toDateOnly(schedule.scheduledDate);
@@ -49,14 +80,20 @@ function getOccupiedDates(schedule) {
 }
 
 /**
- * Tanggal mulai berlakunya sebuah schedule. `scheduledDate`
+ * Tanggal mulai berlakunya schedule (scheduledDate tanpa jam).
+ *
+ * Dipake di: isOccurringOnDate, occurrenceDatesOverlap (file ini).
  */
 function getScheduleStartDate(schedule) {
   return toDateOnly(schedule.scheduledDate);
 }
 
 /**
- * Single source of truth: apakah `schedule` occur (mulai berlaku) tepat di tanggal `date`.
+ * Patokan utama buat nentuin schedule jalan di tanggal tertentu apa nggak:
+ * none (tanggal yang kepake), daily (mulai dari tanggal mulai), weekly (hari
+ * yang dipilih).
+ *
+ * Dipake di: occurrenceDatesOverlap, isStartDue, isEndDue (file ini).
  */
 function isOccurringOnDate(schedule, date) {
   const day = toDateOnly(date);
@@ -80,12 +117,11 @@ function isOccurringOnDate(schedule, date) {
 }
 
 /**
- * Cek apakah dua schedule bakal pernah jalan di tanggal yang sama.
- * - Kalau salah satunya 'none' (cuma jalan di tanggal tertentu), tinggal cek
- *   tanggal itu ketemu ga sama pola schedule satunya. Jadi ga perlu ribet.
- * - Kalau dua-duanya recurring (daily/weekly), polanya bakal muter terus tiap 7 hari.
- *   Jadi cukup cek 1 minggu dari tanggal mulai yang paling akhir dari keduanya.
- *   ga perlu ngecek tanggal satu-satu sampai selamanya.
+ * Ngecek dua schedule bakal pernah jalan di tanggal yang sama apa nggak. Kalo
+ * salah satunya sekali jalan, cukup cek tanggal itu; kalo dua-duanya berulang,
+ * cukup cek 7 hari dari tanggal mulai yang paling belakang.
+ *
+ * Dipake di: schedule.usecase.js → assertNoScheduleConflict.
  */
 function occurrenceDatesOverlap(a, b) {
   if (a.repeatType === "none" || b.repeatType === "none") {
@@ -105,9 +141,10 @@ function occurrenceDatesOverlap(a, b) {
 }
 
 /**
- * Ubah satu rentang waktu jadi daftar interval menit [start, end] dalam 1 hari (0-1440).
- * Rentang yang cross-midnight dipecah jadi 2 interval: [start,1440] dan [0,end].
- * Rentang tanpa endTime dianggap event sesaat (point-in-time).
+ * Ngubah rentang jam jadi interval menit dalam sehari. Yang nyebrang tengah
+ * malem dipecah dua, yang nggak ada endTime dianggep satu titik waktu.
+ *
+ * Dipake di: timeRangesOverlap (file ini).
  */
 function toDailyIntervals(startTime, endTime) {
   const start = timeToMinutes(startTime);
@@ -122,13 +159,21 @@ function toDailyIntervals(startTime, endTime) {
   return [[start, end]];
 }
 
+/**
+ * Ngecek dua interval menit [start, end] tabrakan apa nggak (yang cuma nempel
+ * ujungnya juga dihitung tabrakan).
+ *
+ * Dipake di: timeRangesOverlap (file ini).
+ */
 function intervalsOverlap([aStart, aEnd], [bStart, bEnd]) {
   return aStart <= bEnd && bStart <= aEnd;
 }
 
 /**
- * Cek apakah dua rentang jam (dalam sehari) saling beririsan.
- * Sudah menangani rentang yang cross-midnight di salah satu/kedua sisi.
+ * Ngecek dua rentang jam dalam sehari tabrakan apa nggak, termasuk yang
+ * nyebrang tengah malem.
+ *
+ * Dipake di: schedule.usecase.js → assertNoScheduleConflict.
  */
 function timeRangesOverlap(aStart, aEnd, bStart, bEnd) {
   const aIntervals = toDailyIntervals(aStart, aEnd);
@@ -137,7 +182,10 @@ function timeRangesOverlap(aStart, aEnd, bStart, bEnd) {
 }
 
 /**
- * Apakah `now` adalah momen START trigger schedule ini.
+ * Ngecek menit ini pas sama startTime schedule dan schedule-nya berlaku hari
+ * ini.
+ *
+ * Dipake di: scheduleWorker.js → processMinute.
  */
 function isStartDue(schedule, now) {
   const currentTime = now.toTimeString().slice(0, 5);
@@ -145,9 +193,10 @@ function isStartDue(schedule, now) {
 }
 
 /**
- * Apakah `now` adalah momen END trigger schedule ini.
- * Kalau cross-midnight, "hari mulai" rentang ini adalah KEMARIN (H-1)
- * relatif ke `now`, karena rentangnya nyebrang lewat jam 00:00.
+ * Ngecek menit ini pas sama endTime schedule. Kalo schedule-nya nyebrang
+ * tengah malem, hari mulainya dianggep kemarin.
+ *
+ * Dipake di: scheduleWorker.js → processMinute.
  */
 function isEndDue(schedule, now) {
   if (!schedule.endTime) return false;

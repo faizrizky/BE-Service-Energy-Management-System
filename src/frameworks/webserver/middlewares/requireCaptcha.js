@@ -2,6 +2,12 @@ const { verifyTurnstile } = require("../../security/turnstile");
 const { config } = require("../../../config/config");
 const { logSecurityEvent } = require("../../helpers/securityLog");
 
+/**
+ * Wajibin captcha Turnstile yang valid kalo TURNSTILE_SECRET_KEY diisi; bales
+ * 400 & nyatet security log kalo gagal. Kalo key-nya kosong, langsung lanjut.
+ *
+ * Dipake di: auth.routes.js → POST /api/auth/login.
+ */
 async function requireCaptcha(req, res, next) {
   if (!config.turnstile.enabled) return next();
 

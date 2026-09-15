@@ -1,5 +1,14 @@
 const scheduleUseCase = require("../../application/use_cases/schedule/schedule.usecase");
 
+/**
+ * Handler list schedule pake paginasi, bisa filter room, status
+ * (active/upcoming), tanggal, sama search.
+ *
+ * Dipake di:
+ * - schedule.routes.js → GET /api/schedules
+ * - Frontend: scheduleApi.list (halaman Schedule & Dashboard),
+ *   scheduleClientApi.list (schedule/client.tsx).
+ */
 async function index(req, res, next) {
   try {
     const {
@@ -26,6 +35,13 @@ async function index(req, res, next) {
   }
 }
 
+/**
+ * Handler detail schedule. Kalo nggak ketemu bales 404.
+ *
+ * Dipake di:
+ * - schedule.routes.js → GET /api/schedules/:id
+ * - Frontend: scheduleClientApi.getById (detail di halaman Schedule).
+ */
 async function show(req, res, next) {
   try {
     const schedule = await scheduleUseCase.getScheduleById(req.params.id);
@@ -37,6 +53,14 @@ async function show(req, res, next) {
   }
 }
 
+/**
+ * Handler nambah schedule, pembuatnya diambil dari user yang login. Kalo
+ * bentrok sama jadwal lain bales 409.
+ *
+ * Dipake di:
+ * - schedule.routes.js → POST /api/schedules
+ * - Frontend: scheduleClientApi.create (modal tambah schedule).
+ */
 async function store(req, res, next) {
   try {
     const schedule = await scheduleUseCase.createSchedule(
@@ -49,6 +73,13 @@ async function store(req, res, next) {
   }
 }
 
+/**
+ * Handler ngedit schedule, sambil dicek bentrok lagi.
+ *
+ * Dipake di:
+ * - schedule.routes.js → PUT /api/schedules/:id
+ * - Frontend: scheduleClientApi.update (modal edit schedule).
+ */
 async function update(req, res, next) {
   try {
     const schedule = await scheduleUseCase.updateSchedule(
@@ -61,6 +92,13 @@ async function update(req, res, next) {
   }
 }
 
+/**
+ * Handler hapus schedule, bales 204.
+ *
+ * Dipake di:
+ * - schedule.routes.js → DELETE /api/schedules/:id
+ * - Frontend: scheduleClientApi.remove (halaman Schedule).
+ */
 async function destroy(req, res, next) {
   try {
     await scheduleUseCase.deleteSchedule(req.params.id);

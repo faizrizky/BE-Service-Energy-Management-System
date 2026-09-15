@@ -1,6 +1,13 @@
 const bcrypt = require("bcrypt");
 const { prisma } = require("../../../frameworks/database/prismaClient");
 
+/**
+ * Buang passwordHash dari data user dan ringkes role jadi { id, name } sebelum
+ * dikirim ke client.
+ *
+ * Dipake di: listUsersPaginated, listUsers, getUserById, createUser,
+ *   updateUser, updateProfile (file ini).
+ */
 function sanitizeUser(user) {
   if (!user) return user;
   const { passwordHash, role, ...rest } = user;
@@ -10,6 +17,12 @@ function sanitizeUser(user) {
   };
 }
 
+/**
+ * List user pake paginasi, bisa filter role, search (nama, username, email,
+ * alamat, role), sama tanggal.
+ *
+ * Dipake di: user.controller.js → index (GET /api/users).
+ */
 async function listUsersPaginated({
   page = 1,
   rowsPerPage = 10,
@@ -71,6 +84,11 @@ async function listUsersPaginated({
   };
 }
 
+/**
+ * List semua user tanpa paginasi (udah dibersihin).
+ *
+ * Dipake di: Belom dipake di mana-mana.
+ */
 async function listUsers() {
   const users = await prisma.user.findMany({
     include: { role: true },
@@ -79,6 +97,11 @@ async function listUsers() {
   return users.map(sanitizeUser);
 }
 
+/**
+ * Detail user (udah dibersihin). Balikin null kalo nggak ketemu.
+ *
+ * Dipake di: user.controller.js → show (GET /api/users/:id).
+ */
 async function getUserById(id) {
   const user = await prisma.user.findUnique({
     where: { id },
@@ -87,6 +110,12 @@ async function getUserById(id) {
   return sanitizeUser(user);
 }
 
+/**
+ * Bikin user dengan password yang di-hash bcrypt. Kalo password nggak diisi,
+ * pake password default "default123".
+ *
+ * Dipake di: user.controller.js → store (POST /api/users).
+ */
 async function createUser(data) {
   const passwordHash = await bcrypt.hash(data.password || "default123", 10);
 
@@ -106,6 +135,12 @@ async function createUser(data) {
   return sanitizeUser(user);
 }
 
+/**
+ * Ngedit user. Field password nggak disimpen mentah, tapi di-hash ke
+ * passwordHash kalo diisi.
+ *
+ * Dipake di: user.controller.js → update (PUT /api/users/:id).
+ */
 async function updateUser(id, data) {
   const updateData = { ...data };
   delete updateData.password;
@@ -123,10 +158,21 @@ async function updateUser(id, data) {
   return sanitizeUser(user);
 }
 
+/**
+ * Hapus user berdasarkan id.
+ *
+ * Dipake di: user.controller.js → destroy (DELETE /api/users/:id).
+ */
 async function deleteUser(id) {
   return prisma.user.delete({ where: { id } });
 }
 
+/**
+ * Ngedit profil sendiri, cuma fullName, phone, address, sama avatarUrl yang
+ * boleh diubah.
+ *
+ * Dipake di: user.controller.js → updateMyProfile (PUT /api/users/me).
+ */
 async function updateProfile(id, data) {
   const { fullName, phone, address, avatarUrl } = data;
   const user = await prisma.user.update({

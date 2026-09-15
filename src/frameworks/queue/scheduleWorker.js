@@ -20,7 +20,10 @@ const MAX_CATCHUP_MINUTES = 5;
 let lastCheckedAt = null;
 
 /**
- * Bikin daftar timestamp per-menit dari (lastCheckedAt, now]
+ * Bikin list menit yang perlu dicek dari pengecekan terakhir sampe sekarang
+ * (buat ngejar yang kelewat), maksimal 5 menit terakhir.
+ *
+ * Dipake di: executeDueSchedules (file ini).
  */
 function getMinutesToCheck(from, to) {
   const floorToMinute = (d) => {
@@ -55,6 +58,13 @@ function getMinutesToCheck(from, to) {
   return minutes;
 }
 
+/**
+ * Jalanin schedule yang jatuh tempo di menit tertentu: kirim perintah ke
+ * device/room (action dibalik pas endTime), terus tandain completed buat
+ * schedule sekali jalan yang udah kelar.
+ *
+ * Dipake di: executeDueSchedules (file ini).
+ */
 async function processMinute(minuteDate) {
   const currentTime = minuteDate.toTimeString().slice(0, 5);
 
@@ -121,6 +131,12 @@ async function processMinute(minuteDate) {
   }
 }
 
+/**
+ * Processor job scheduler: ngecek semua menit yang belom dicek, terus nyimpen
+ * waktu cek terakhir (di memori).
+ *
+ * Dipake di: startScheduleWorker (processor worker schedule-executor).
+ */
 async function executeDueSchedules() {
   const now = new Date();
   const minutesToCheck = getMinutesToCheck(lastCheckedAt, now);
@@ -132,6 +148,11 @@ async function executeDueSchedules() {
   lastCheckedAt = now;
 }
 
+/**
+ * Nyalain worker BullMQ schedule-executor dan nyatet job yang gagal.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function startScheduleWorker() {
   const worker = new Worker("schedule-executor", executeDueSchedules, {
     connection,

@@ -13,8 +13,12 @@ const QUEUE_NAME = "relay-command";
 const relayCommandQueue = new Queue(QUEUE_NAME, { connection });
 
 /**
- * Satu job per CommandLog. jobId = commandId supaya perintah yang sama tidak
- * masuk antrean dua kali (misal saat recovery setelah restart).
+ * Masukin satu CommandLog ke antrean relay-command. jobId = commandId biar
+ * perintah yang sama nggak masuk dua kali; job di-retry 3 kali kalo
+ * processor-nya error.
+ *
+ * Dipake di: device.usecase.js → requestRelayCommand,
+ *   recoverPendingRelayCommands.
  */
 function enqueueRelayCommand(commandId) {
   return relayCommandQueue.add(
@@ -31,8 +35,11 @@ function enqueueRelayCommand(commandId) {
 }
 
 /**
- * processor(commandId) menjalankan retry sampai berhasil/batas waktu.
- * onFailed dipanggil kalau processor sendiri error di semua attempt (misal DB down).
+ * Nyalain worker BullMQ relay-command (50 job barengan, job yang keputus
+ * diambil ulang) dan manggil onFailed kalo attempt terakhir tetep gagal.
+ *
+ * Dipake di: app.js → bootstrap (processor-nya device.usecase.js →
+ *   processRelayCommand).
  */
 function startRelayCommandWorker(processor, { onFailed } = {}) {
   const worker = new Worker(

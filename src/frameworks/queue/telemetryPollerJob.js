@@ -8,6 +8,12 @@ const {
 const TICK_MS = 60 * 1000;
 const PING_TIMEOUT_MS = 120000;
 
+/**
+ * Device perlu di-poll kalo belom pernah keliatan atau lastSeenAt-nya udah
+ * lewat intervalMinutes.
+ *
+ * Dipake di: runTick (file ini).
+ */
 function isDue(device, now) {
   if (!device.lastSeenAt) return true;
   const dueAt =
@@ -15,6 +21,12 @@ function isDue(device, now) {
   return now.getTime() >= dueAt;
 }
 
+/**
+ * Ngambil & nyimpen telemetry satu device. Kalo error cuma dicatet sebagai
+ * warning.
+ *
+ * Dipake di: runTick (file ini).
+ */
 async function pollDevice(device) {
   try {
     await fetchAndStoreTelemetry(device, { timeout: PING_TIMEOUT_MS });
@@ -27,6 +39,13 @@ async function pollDevice(device) {
 
 let isRunning = false;
 
+/**
+ * Satu putaran poller: ambil device yang punya devEUI, pilih yang udah
+ * waktunya & nggak lagi sibuk, terus poll barengan. Kalo putaran sebelumnya
+ * belom kelar, putaran ini di-skip.
+ *
+ * Dipake di: startTelemetryPoller (pas start & tiap 1 menit).
+ */
 async function runTick() {
   if (isRunning) {
     logger.warn("[TelemetryPoller] Tick sebelumnya masih jalan, skip tick ini");
@@ -48,6 +67,11 @@ async function runTick() {
   }
 }
 
+/**
+ * Nyalain poller telemetry sekali pas start, terus tiap 1 menit.
+ *
+ * Dipake di: app.js → bootstrap.
+ */
 function startTelemetryPoller() {
   runTick();
   const interval = setInterval(runTick, TICK_MS);
