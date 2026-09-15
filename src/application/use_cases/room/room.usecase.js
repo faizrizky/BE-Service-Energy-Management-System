@@ -5,6 +5,11 @@ const {
 } = require("../device/device.usecase");
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
+  getHourlyConsumption,
+  sumKwhByDevice,
+  peakHourlyKwh,
+} = require("../report/energy-consumption.util");
+const {
   emitRoomCreated,
   emitRoomUpdated,
   emitRoomDeleted,
@@ -68,16 +73,18 @@ async function listRoomsPaginated({
     }),
   ]);
 
-  const pendingByDevice = await getPendingCommandsByDevice(
-    rooms.flatMap((room) => room.devices.map((d) => d.id)),
-  );
+  const deviceIds = rooms.flatMap((room) => room.devices.map((d) => d.id));
+  const [pendingByDevice, usageByDevice] = await Promise.all([
+    getPendingCommandsByDevice(deviceIds),
+    getUsage24hByDevice(deviceIds),
+  ]);
 
   const now = new Date();
   const data = await Promise.all(
     rooms.map(async (room) => {
       const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
-      const usagePerDevice = await Promise.all(
-        room.devices.map((d) => computeDeviceUsage24h(d.id)),
+      const usagePerDevice = room.devices.map(
+        (d) => usageByDevice.get(d.id) || 0,
       );
       return {
         id: room.id,
@@ -108,37 +115,27 @@ async function listRoomsPaginated({
 }
 
 /**
- * Ringkasan energi 24 jam satu room: total, rata-rata, puncak, sama device
- * yang paling boros.
+ * Ringkasan energi 24 jam satu room dari selisih reading meter: total,
+ * rata-rata per jam, puncak per jam, sama device yang paling boros.
  *
  * Dipake di: getRoomUsageSummary, getRoomById (file ini).
  */
 async function computeRoomUsage(roomId) {
   const devices = await prisma.device.findMany({ where: { roomId } });
-  const since = new Date(Date.now() - ONE_DAY_MS);
+  const end = new Date();
+  const consumption = await getHourlyConsumption({
+    start: new Date(end.getTime() - ONE_DAY_MS),
+    end,
+    deviceIds: devices.map((device) => device.id),
+  });
+  const consumptionByDevice = sumKwhByDevice(consumption);
 
-  const perDevice = await Promise.all(
-    devices.map(async (device) => {
-      const agg = await prisma.energyReading.aggregate({
-        where: { deviceId: device.id, recordedAt: { gte: since } },
-        _sum: { usageKwh: true },
-        _avg: { usageKwh: true },
-        _max: { usageKwh: true },
-      });
-      return {
-        name: device.name,
-        totalKwh: agg._sum.usageKwh || 0,
-        avgKwh: agg._avg.usageKwh || 0,
-        peakKwh: agg._max.usageKwh || 0,
-      };
-    }),
-  );
+  const perDevice = devices.map((device) => ({
+    name: device.name,
+    totalKwh: consumptionByDevice.get(device.id) || 0,
+  }));
 
   const total24hKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
-  const avg24hKwh = perDevice.length
-    ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
-    : 0;
-  const peakKwh = perDevice.reduce((max, d) => Math.max(max, d.peakKwh), 0);
   const highest = perDevice.reduce(
     (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
     null,
@@ -146,8 +143,8 @@ async function computeRoomUsage(roomId) {
 
   return {
     total24hKwh: Number(total24hKwh.toFixed(2)),
-    avg24hKwh: Number(avg24hKwh.toFixed(2)),
-    peakKwh: Number(peakKwh.toFixed(2)),
+    avg24hKwh: Number((total24hKwh / 24).toFixed(2)),
+    peakKwh: Number(peakHourlyKwh(consumption).toFixed(2)),
     highestComponent: {
       name: highest?.name || "-",
       kwh: Number((highest?.totalKwh || 0).toFixed(2)),
@@ -226,18 +223,14 @@ async function getRoomById(
     computeRoomUsage(id),
   ]);
 
-  const since = new Date(Date.now() - ONE_DAY_MS);
-  const pendingByDevice = await getPendingCommandsByDevice(
-    devices.map((d) => d.id),
-  );
+  const [pendingByDevice, usageByDevice] = await Promise.all([
+    getPendingCommandsByDevice(devices.map((d) => d.id)),
+    getUsage24hByDevice(devices.map((d) => d.id)),
+  ]);
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => {
-      const agg = await prisma.energyReading.aggregate({
-        where: { deviceId: device.id, recordedAt: { gte: since } },
-        _sum: { usageKwh: true },
-      });
-      const totalKwh = agg._sum.usageKwh || 0;
+      const totalKwh = usageByDevice.get(device.id) || 0;
       return {
         id: device.id,
         tbDeviceId: device.tbDeviceId || device.eui,
@@ -324,6 +317,8 @@ async function listDevicesInRoom(
     devices.map((d) => d.id),
   );
 
+  const usageByDevice = await getUsage24hByDevice(devices.map((d) => d.id));
+
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
       id: device.id,
@@ -331,7 +326,7 @@ async function listDevicesInRoom(
       deviceEui: device.eui,
       component: device.deviceType || "-",
       totalUsage24hKwh: Number(
-        (await computeDeviceUsage24h(device.id)).toFixed(2),
+        (usageByDevice.get(device.id) || 0).toFixed(2),
       ),
       intervalMinutes: device.intervalMinutes,
       isPowerOn: device.status === "on",
@@ -363,34 +358,20 @@ function isDeviceOnline(device, now) {
 }
 
 /**
- * Pemakaian 24 jam satu device: reading terbaru dikurangin reading paling
- * lama, nggak pernah minus.
+ * Pemakaian 24 jam (selisih reading meter, tahan meter reset) buat banyak
+ * device sekaligus, cukup satu query. Hasil: Map deviceId → kWh.
  *
- * Dipake di: listRoomsPaginated, listDevicesInRoom, listRoomsSummary (file
- *   ini).
+ * Dipake di: listRoomsPaginated, getRoomById, listDevicesInRoom,
+ *   listRoomsSummary (file ini).
  */
-async function computeDeviceUsage24h(deviceId) {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-  const [latest, earliest] = await Promise.all([
-    prisma.energyReading.findFirst({
-      where: { deviceId, recordedAt: { gte: since } },
-      orderBy: { recordedAt: "desc" },
-    }),
-    prisma.energyReading.findFirst({
-      where: { deviceId, recordedAt: { gte: since } },
-      orderBy: { recordedAt: "asc" },
-    }),
-  ]);
-
-  if (
-    !latest ||
-    !earliest ||
-    latest.usageKwh == null ||
-    earliest.usageKwh == null
-  )
-    return 0;
-  return Math.max(0, latest.usageKwh - earliest.usageKwh);
+async function getUsage24hByDevice(deviceIds) {
+  const end = new Date();
+  const consumption = await getHourlyConsumption({
+    start: new Date(end.getTime() - ONE_DAY_MS),
+    end,
+    deviceIds,
+  });
+  return sumKwhByDevice(consumption);
 }
 
 /**
@@ -408,13 +389,16 @@ async function listRoomsSummary(filter = {}) {
     orderBy: { createdAt: "desc" },
   });
 
+  const usageByDevice = await getUsage24hByDevice(
+    rooms.flatMap((room) => room.devices.map((d) => d.id)),
+  );
   const now = new Date();
 
   return Promise.all(
     rooms.map(async (room) => {
       const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
-      const usagePerDevice = await Promise.all(
-        room.devices.map((d) => computeDeviceUsage24h(d.id)),
+      const usagePerDevice = room.devices.map(
+        (d) => usageByDevice.get(d.id) || 0,
       );
       const totalUsage24hKwh = usagePerDevice.reduce((sum, v) => sum + v, 0);
 

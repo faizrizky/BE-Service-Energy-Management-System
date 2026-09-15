@@ -3,6 +3,12 @@ const { config } = require("../../../config/config");
 const {
   getTodayInScheduleZone,
 } = require("../schedule/schedule-time.util");
+const {
+  getHourlyConsumption,
+  sumKwh,
+  sumKwhByDevice,
+  peakHourlyKwh,
+} = require("./energy-consumption.util");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 
@@ -18,8 +24,9 @@ const RANGE_DAYS = {
 };
 
 /**
- * Laporan pemakaian per device di rentang tanggal: reading tertinggi dikurangi
- * terendah, diurutin dari yang paling boros. Tanggal (maks 366 hari) sama
+ * Laporan pemakaian per device di rentang tanggal: konsumsi = total selisih
+ * reading meter (tahan meter reset), plus angka meter awal/akhir buat info,
+ * diurutin dari yang paling boros. Tanggal (maks 366 hari) sama
  * room/device-nya dicek dulu.
  *
  * Dipake di: report.controller.js → reportSummary (GET /api/reports/summary).
@@ -76,11 +83,16 @@ async function getReportSummary({ roomId, deviceId, from, to }) {
 
   if (grouped.length === 0) return [];
 
-  const devices = await prisma.device.findMany({
-    where: { id: { in: grouped.map((g) => g.deviceId) } },
-    include: { room: true },
-  });
+  const deviceIds = grouped.map((g) => g.deviceId);
+  const [devices, consumption] = await Promise.all([
+    prisma.device.findMany({
+      where: { id: { in: deviceIds } },
+      include: { room: true },
+    }),
+    getHourlyConsumption({ start: fromDate, end: toDate, deviceIds }),
+  ]);
   const deviceById = new Map(devices.map((d) => [d.id, d]));
+  const consumptionByDevice = sumKwhByDevice(consumption);
 
   return grouped
     .map((g) => {
@@ -98,7 +110,9 @@ async function getReportSummary({ roomId, deviceId, from, to }) {
         rangeEnd: g._max.recordedAt,
         startUsageKwh,
         endUsageKwh,
-        usageKwh: Number((endUsageKwh - startUsageKwh).toFixed(3)),
+        usageKwh: Number(
+          (consumptionByDevice.get(g.deviceId) || 0).toFixed(3),
+        ),
       };
     })
     .sort((a, b) => b.usageKwh - a.usageKwh);
@@ -195,8 +209,8 @@ function parseDateStrict(value, label) {
 }
 
 /**
- * Total pemakaian, rata-rata daya, sama jumlah reading satu device buat range
- * today/week/month.
+ * Total pemakaian (selisih reading meter), rata-rata daya, sama jumlah reading
+ * satu device buat range today/week/month.
  *
  * Dipake di: report.controller.js → deviceUsage (GET
  *   /api/reports/devices/:id/usage).
@@ -211,12 +225,14 @@ async function getDeviceUsage(deviceId, range) {
 
   const { start, end } = getRangeBounds(range);
 
-  const agg = await prisma.energyReading.aggregate({
-    where: { deviceId, recordedAt: { gte: start, lte: end } },
-    _sum: { usageKwh: true },
-    _avg: { powerWatt: true },
-    _count: true,
-  });
+  const [agg, consumption] = await Promise.all([
+    prisma.energyReading.aggregate({
+      where: { deviceId, recordedAt: { gte: start, lte: end } },
+      _avg: { powerWatt: true },
+      _count: true,
+    }),
+    getHourlyConsumption({ start, end, deviceIds: [deviceId] }),
+  ]);
 
   return {
     deviceId,
@@ -224,15 +240,15 @@ async function getDeviceUsage(deviceId, range) {
     range,
     from: start,
     to: end,
-    totalUsageKwh: agg._sum.usageKwh || 0,
+    totalUsageKwh: Number(sumKwh(consumption).toFixed(3)),
     avgPowerWatt: agg._avg.powerWatt || 0,
     readingCount: agg._count,
   };
 }
 
 /**
- * Pemakaian energi tiap device di satu room plus totalnya buat range
- * today/week/month.
+ * Pemakaian energi (selisih reading meter) tiap device di satu room plus
+ * totalnya buat range today/week/month.
  *
  * Dipake di: report.controller.js → roomUsage (GET
  *   /api/reports/rooms/:id/usage).
@@ -262,19 +278,19 @@ async function getRoomUsage(roomId, range) {
     };
   }
 
-  const perDevice = await Promise.all(
-    room.devices.map(async (device) => {
-      const agg = await prisma.energyReading.aggregate({
-        where: { deviceId: device.id, recordedAt: { gte: start, lte: end } },
-        _sum: { usageKwh: true },
-      });
-      return {
-        deviceId: device.id,
-        deviceName: device.name,
-        usageKwh: agg._sum.usageKwh || 0,
-      };
+  const consumptionByDevice = sumKwhByDevice(
+    await getHourlyConsumption({
+      start,
+      end,
+      deviceIds: room.devices.map((device) => device.id),
     }),
   );
+
+  const perDevice = room.devices.map((device) => ({
+    deviceId: device.id,
+    deviceName: device.name,
+    usageKwh: Number((consumptionByDevice.get(device.id) || 0).toFixed(3)),
+  }));
 
   const totalUsageKwh = perDevice.reduce((sum, d) => sum + d.usageKwh, 0);
 
@@ -284,13 +300,14 @@ async function getRoomUsage(roomId, range) {
     range,
     from: start,
     to: end,
-    totalUsageKwh,
+    totalUsageKwh: Number(totalUsageKwh.toFixed(3)),
     devices: perDevice,
   };
 }
 
 /**
- * Ringkasan dashboard: kWh hari ini & persen perubahan dari kemarin, jumlah
+ * Ringkasan dashboard: kWh hari ini (selisih reading meter) & persen
+ * perubahan dari kemarin, jumlah
  * gateway online (dari kolom status), sama device online/offline.
  *
  * Dipake di: report.controller.js → dashboardSummary (GET
@@ -307,8 +324,7 @@ async function getDashboardSummary() {
     devices,
     totalGateways,
     onlineGateways,
-    todayUsage,
-    yesterdayUsage,
+    consumption,
   ] = await Promise.all([
     prisma.device.count(),
     prisma.device.findMany({
@@ -316,19 +332,14 @@ async function getDashboardSummary() {
     }),
     prisma.gateway.count(),
     prisma.gateway.count({ where: { status: "online" } }),
-    prisma.energyReading.aggregate({
-      where: { recordedAt: { gte: todayStart, lte: todayEnd } },
-      _sum: { usageKwh: true },
-    }),
-    prisma.energyReading.aggregate({
-      where: { recordedAt: { gte: yesterdayStart, lt: todayStart } },
-      _sum: { usageKwh: true },
-    }),
+    getHourlyConsumption({ start: yesterdayStart, end: todayEnd }),
   ]);
 
   const devicesOnline = devices.filter((d) => isDeviceOnline(d, now)).length;
-  const totalKwh = todayUsage._sum.usageKwh || 0;
-  const yesterdayKwh = yesterdayUsage._sum.usageKwh || 0;
+  const totalKwh = sumKwh(consumption.filter((row) => row.hour >= todayStart));
+  const yesterdayKwh = sumKwh(
+    consumption.filter((row) => row.hour < todayStart),
+  );
   const changePercentFromYesterday =
     yesterdayKwh > 0
       ? Number((((totalKwh - yesterdayKwh) / yesterdayKwh) * 100).toFixed(1))
@@ -368,8 +379,8 @@ function bucketKey(date, granularity) {
 }
 
 /**
- * Data grafik energi: reading dikelompokin per jam/hari/bulan sesuai range,
- * plus nilai terakhir, puncak, sama rata-ratanya.
+ * Data grafik energi: konsumsi (selisih reading meter) dikelompokin per
+ * jam/hari/bulan sesuai range, plus nilai terakhir, puncak, sama rata-ratanya.
  *
  * Dipake di: report.controller.js → energyUsageTimeline (GET
  *   /api/dashboard/energy-usage-timeline).
@@ -388,15 +399,12 @@ async function getEnergyUsageTimeline(range) {
   const start = new Date(end);
   start.setDate(start.getDate() - days);
 
-  const readings = await prisma.energyReading.findMany({
-    where: { recordedAt: { gte: start, lte: end } },
-    select: { recordedAt: true, usageKwh: true },
-  });
+  const consumption = await getHourlyConsumption({ start, end });
 
   const buckets = new Map();
-  for (const r of readings) {
-    const key = bucketKey(r.recordedAt, granularity);
-    buckets.set(key, (buckets.get(key) || 0) + (r.usageKwh || 0));
+  for (const row of consumption) {
+    const key = bucketKey(row.hour, granularity);
+    buckets.set(key, (buckets.get(key) || 0) + row.kwh);
   }
 
   const points = [...buckets.entries()]
@@ -416,8 +424,9 @@ async function getEnergyUsageTimeline(range) {
 }
 
 /**
- * Ngitung pemakaian total, rata-rata, puncak, sama komponen paling boros tiap
- * room, terus ambil 5 room tertinggi.
+ * Ngitung pemakaian tiap room dari selisih reading meter: total, rata-rata per
+ * jam, puncak per jam, sama komponen paling boros, terus ambil 5 room
+ * tertinggi. Semua device diambil sekali query.
  *
  * Dipake di: report.controller.js → topRiskyRooms (GET
  *   /api/dashboard/top-risky-rooms).
@@ -434,56 +443,43 @@ async function getTopRiskyRooms(range) {
   start.setDate(start.getDate() - days);
 
   const rooms = await prisma.room.findMany({ include: { devices: true } });
+  const consumption = await getHourlyConsumption({
+    start,
+    end,
+    deviceIds: rooms.flatMap((room) => room.devices.map((d) => d.id)),
+  });
+  const totalHours = days * 24;
 
-  const results = await Promise.all(
-    rooms.map(async (room) => {
-      if (room.devices.length === 0) return null;
+  const results = rooms.map((room) => {
+    if (room.devices.length === 0) return null;
 
-      const perDevice = await Promise.all(
-        room.devices.map(async (device) => {
-          const agg = await prisma.energyReading.aggregate({
-            where: {
-              deviceId: device.id,
-              recordedAt: { gte: start, lte: end },
-            },
-            _sum: { usageKwh: true },
-            _avg: { usageKwh: true },
-            _max: { usageKwh: true },
-          });
-          return {
-            name: device.name,
-            totalKwh: agg._sum.usageKwh || 0,
-            avgKwh: agg._avg.usageKwh || 0,
-            peakKwh: agg._max.usageKwh || 0,
-          };
-        }),
-      );
+    const roomDeviceIds = new Set(room.devices.map((d) => d.id));
+    const roomRows = consumption.filter((row) =>
+      roomDeviceIds.has(row.deviceId),
+    );
+    const consumptionByDevice = sumKwhByDevice(roomRows);
+    const perDevice = room.devices.map((device) => ({
+      name: device.name,
+      totalKwh: consumptionByDevice.get(device.id) || 0,
+    }));
 
-      const totalUsageKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
-      const avgUsageKwh = perDevice.length
-        ? perDevice.reduce((sum, d) => sum + d.avgKwh, 0) / perDevice.length
-        : 0;
-      const peakUsageKwh = perDevice.reduce(
-        (max, d) => Math.max(max, d.peakKwh),
-        0,
-      );
-      const highest = perDevice.reduce(
-        (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
-        null,
-      );
+    const totalUsageKwh = perDevice.reduce((sum, d) => sum + d.totalKwh, 0);
+    const highest = perDevice.reduce(
+      (best, d) => (d.totalKwh > (best?.totalKwh || 0) ? d : best),
+      null,
+    );
 
-      return {
-        id: room.id,
-        name: room.name,
-        location: room.location,
-        highestComponent: highest?.name || "-",
-        highestComponentKwh: Number((highest?.totalKwh || 0).toFixed(3)),
-        peakUsageKwh: Number(peakUsageKwh.toFixed(3)),
-        avgUsageKwh: Number(avgUsageKwh.toFixed(3)),
-        totalUsageKwh: Number(totalUsageKwh.toFixed(3)),
-      };
-    }),
-  );
+    return {
+      id: room.id,
+      name: room.name,
+      location: room.location,
+      highestComponent: highest?.name || "-",
+      highestComponentKwh: Number((highest?.totalKwh || 0).toFixed(3)),
+      peakUsageKwh: Number(peakHourlyKwh(roomRows).toFixed(3)),
+      avgUsageKwh: Number((totalUsageKwh / totalHours).toFixed(3)),
+      totalUsageKwh: Number(totalUsageKwh.toFixed(3)),
+    };
+  });
 
   return results
     .filter(Boolean)

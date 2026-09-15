@@ -135,7 +135,7 @@ const listCsDevices = (applicationId = config.chirpstack.applicationId) =>
  * Detail device ChirpStack dari devEUI.
  *
  * Dipake di:
- * - devicesync.js → csDeviceExists
+ * - deviceSync.js → csDeviceExists
  * - device.usecase.js → getDeviceChirpstackMetadata.
  */
 const getCsDevice = (devEui) =>
@@ -145,7 +145,7 @@ const getCsDevice = (devEui) =>
  * Daftarin device ke ChirpStack pake applicationId & deviceProfileId dari
  * config.
  *
- * Dipake di: devicesync.js → ensureCsDeviceRegistered.
+ * Dipake di: deviceSync.js → ensureCsDeviceRegistered.
  */
 const createCsDevice = (payload) =>
   csRequest(`/api/chirpstack/devices`, {
@@ -161,7 +161,7 @@ const createCsDevice = (payload) =>
 /**
  * Ngedit nama/deskripsi device di ChirpStack.
  *
- * Dipake di: devicesync.js → ensureCsDeviceRegistered.
+ * Dipake di: deviceSync.js → ensureCsDeviceRegistered.
  */
 const updateCsDevice = (devEui, payload) =>
   csRequest(`/api/chirpstack/devices/${requireDevEui(devEui)}`, {
@@ -172,7 +172,7 @@ const updateCsDevice = (devEui, payload) =>
 /**
  * Hapus device dari ChirpStack.
  *
- * Dipake di: devicesync.js → removeCsDevice, rollbackCsDevice.
+ * Dipake di: deviceSync.js → removeCsDevice, rollbackCsDevice.
  */
 const deleteCsDevice = (devEui) =>
   csRequest(`/api/chirpstack/devices/${requireDevEui(devEui)}`, {
@@ -229,7 +229,7 @@ const setRelay = (
  * Kirim interval laporan meter (detik) lewat downlink.
  *
  * Dipake di:
- * - devicesync.js → pushReportInterval
+ * - deviceSync.js → pushReportInterval
  * - device.usecase.js → setDeviceInterval.
  */
 const setReportInterval = (devEUI, intervalSeconds) =>

@@ -3,7 +3,7 @@
  * status yang pas.
  *
  * Dipake di: device.usecase.js, room.usecase.js, chirpstack/contract.js,
- *   chirpstack/devicesync.js.
+ *   chirpstack/deviceSync.js.
  */
 function httpError(message, status = 500) {
   const err = new Error(message);
