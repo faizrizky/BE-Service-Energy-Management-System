@@ -4,7 +4,10 @@ const createDeviceSchema = z.object({
   eui: z.string().min(1, "eui wajib diisi").max(100),
   tbDeviceId: z
     .string()
-    .regex(/^[0-9a-fA-F]{16}$/, "tbDeviceId harus devEUI ChirpStack (16 karakter hex)")
+    .regex(
+      /^[0-9a-fA-F]{16}$/,
+      "tbDeviceId harus devEUI ChirpStack (16 karakter hex)",
+    )
     .optional()
     .nullable()
     .or(z.literal("")),
@@ -26,4 +29,27 @@ const powerActionSchema = z.object({
   action: z.enum(["on", "off"], { message: 'action harus "on" atau "off"' }),
 });
 
-module.exports = { createDeviceSchema, updateDeviceSchema, powerActionSchema };
+const telemetryPingSchema = z.object({
+  timeout: z.coerce
+    .number()
+    .int()
+    .min(5000, "timeout minimal 5000 ms")
+    .max(300000, "timeout maksimal 300000 ms")
+    .optional(),
+});
+
+const intervalSchema = z.object({
+  intervalMinutes: z.coerce
+    .number()
+    .int()
+    .min(15, "Interval minutes minimal 15")
+    .max(1440, "Interval minutes maksimal 1440"),
+});
+
+module.exports = {
+  createDeviceSchema,
+  updateDeviceSchema,
+  powerActionSchema,
+  telemetryPingSchema,
+  intervalSchema,
+};

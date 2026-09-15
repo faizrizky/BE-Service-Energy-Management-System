@@ -1,4 +1,15 @@
 const { config } = require("../../config/config");
+const DEV_EUI_PATTERN = /^[0-9a-f]{16}$/;
+
+function requireDevEui(devEui) {
+  if (typeof devEui !== "string" || !/^[0-9a-f]{16}$/i.test(devEui)) {
+    const preview = String(devEui).slice(0, 60);
+    const err = new Error(`[ChirpStack] devEUI tidak valid: "${preview}"`);
+    err.status = 400;
+    throw err;
+  }
+  return devEui.toLocaleLowerCase();
+}
 
 async function csRequest(path, options = {}, timeoutMs = 15000) {
   const url = `${config.chirpstack.baseUrl}${path}`;
@@ -70,7 +81,8 @@ const listApplications = () => csRequest(`/api/chirpstack/applications`);
 const listCsDevices = (applicationId = config.chirpstack.applicationId) =>
   csRequest(`/api/chirpstack/devices?applicationId=${applicationId}`);
 
-const getCsDevice = (devEui) => csRequest(`/api/chirpstack/devices/${devEui}`);
+const getCsDevice = (devEui) =>
+  csRequest(`/api/chirpstack/devices/${requireDevEui(devEui)}`);
 
 const createCsDevice = (payload) =>
   csRequest(`/api/chirpstack/devices`, {
@@ -79,17 +91,20 @@ const createCsDevice = (payload) =>
       applicationId: config.chirpstack.applicationId,
       deviceProfileId: config.chirpstack.deviceProfileId,
       ...payload,
+      devEui: requireDevEui(payload.devEui),
     }),
   });
 
 const updateCsDevice = (devEui, payload) =>
-  csRequest(`/api/chirpstack/devices/${devEui}`, {
+  csRequest(`/api/chirpstack/devices/${requireDevEui(devEui)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 
 const deleteCsDevice = (devEui) =>
-  csRequest(`/api/chirpstack/devices/${devEui}`, { method: "DELETE" });
+  csRequest(`/api/chirpstack/devices/${requireDevEui(devEui)}`, {
+    method: "DELETE",
+  });
 
 const pingTelemetry = (devEUI, { timeout = 120000 } = {}) =>
   csRequest(
@@ -97,7 +112,7 @@ const pingTelemetry = (devEUI, { timeout = 120000 } = {}) =>
     {
       method: "POST",
       body: JSON.stringify({
-        devEUI,
+        devEUI: requireDevEui(devEUI),
         applicationId: config.chirpstack.applicationId,
         timeout,
       }),
@@ -115,7 +130,7 @@ const setRelay = (
     {
       method: "POST",
       body: JSON.stringify({
-        devEUI,
+        devEUI: requireDevEui(devEUI),
         applicationId: config.chirpstack.applicationId,
         relay: turnOn ? 1 : 0,
         wakeTimeout,
@@ -140,7 +155,7 @@ const setReportInterval = (devEUI, intervalSeconds) =>
   csRequest(`/api/interval`, {
     method: "POST",
     body: JSON.stringify({
-      devEUI,
+      devEUI: requireDevEui(devEUI),
       applicationId: config.chirpstack.applicationId,
       interval: intervalSeconds,
     }),

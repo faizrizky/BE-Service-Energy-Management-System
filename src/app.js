@@ -20,10 +20,16 @@ const { startRetentionJob } = require("./frameworks/queue/retentionJob");
 const {
   startTelemetryPoller,
 } = require("./frameworks/queue/telemetryPollerJob");
+const {
+  startRelayCommandWorker,
+  relayCommandQueue,
+} = require("./frameworks/queue/relayCommandQueue");
+const deviceUseCase = require("./application/use_cases/device/device.usecase");
 const { createServer } = require("./frameworks/webserver/server");
 
 let httpServer;
 let scheduleWorker;
+let relayCommandWorker;
 
 async function bootstrap() {
   try {
@@ -39,6 +45,19 @@ async function bootstrap() {
 
     await initRepeatableJob();
     scheduleWorker = startScheduleWorker();
+    relayCommandWorker = startRelayCommandWorker(
+      deviceUseCase.processRelayCommand,
+      {
+        onFailed: (commandId, err) =>
+          deviceUseCase.failRelayCommand(commandId, err).catch((e) => {
+            logger.error(
+              "[RelayCommand] Gagal menandai command gagal:",
+              e.message,
+            );
+          }),
+      },
+    );
+    await deviceUseCase.recoverPendingRelayCommands();
     startRetentionJob();
     startTelemetryPoller();
 
@@ -74,7 +93,13 @@ async function gracefulShutdown(signal) {
       logger.info("[Shutdown] Schedule worker ditutup");
     }
 
+    if (relayCommandWorker) {
+      await relayCommandWorker.close(true);
+      logger.info("[Shutdown] Relay command worker ditutup");
+    }
+
     await scheduleQueue.close();
+    await relayCommandQueue.close();
 
     await disconnectDatabase();
 

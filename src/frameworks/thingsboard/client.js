@@ -144,20 +144,6 @@ async function listTbDevices({ page = 0, pageSize = 50 } = {}) {
   );
 }
 
-async function getActiveAlarms({ pageSize = 20, page = 0 } = {}) {
-  return tbRequest(
-    `/api/alarms?pageSize=${pageSize}&page=${page}&sortProperty=createdTime&sortOrder=DESC&statusList=ACTIVE_UNACK,ACTIVE_ACK`,
-  );
-}
-
-async function ackAlarm(alarmId) {
-  return tbRequest(`/api/alarm/${alarmId}/ack`, { method: "POST" });
-}
-
-async function clearAlarm(alarmId) {
-  return tbRequest(`/api/alarm/${alarmId}/clear`, { method: "POST" });
-}
-
 /**
  * Ambil nilai telemetry terbaru untuk satu device.
  * @param {string} tbDeviceId
@@ -179,7 +165,4 @@ module.exports = {
   setDeviceAttributes,
   getTelemetryHistory,
   listTbDevices,
-  getActiveAlarms,
-  ackAlarm,
-  clearAlarm,
 };

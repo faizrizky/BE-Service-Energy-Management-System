@@ -1,8 +1,9 @@
 const logger = require("../helpers/logger");
 const { prisma } = require("../database/prismaClient");
-const { pingTelemetry } = require("../chirpstack/client");
-const { parseTelemetryResponse } = require("../chirpstack/contract");
-const { emitDeviceStatus } = require("../webserver/socket-events");
+const {
+  fetchAndStoreTelemetry,
+  isDeviceBusy,
+} = require("../../application/use_cases/device/device.usecase");
 
 const TICK_MS = 60 * 1000;
 const PING_TIMEOUT_MS = 120000;
@@ -16,40 +17,7 @@ function isDue(device, now) {
 
 async function pollDevice(device) {
   try {
-    const raw = await pingTelemetry(device.tbDeviceId, {
-      timeout: PING_TIMEOUT_MS,
-    });
-    const parsed = parseTelemetryResponse(raw);
-
-    await prisma.device.update({
-      where: { id: device.id },
-      data: {
-        lastSeenAt: new Date(),
-        ...(parsed.relayStatus && parsed.relayStatus !== device.status
-          ? { status: parsed.relayStatus }
-          : {}),
-      },
-    });
-
-    if (parsed.usageKwh !== null || parsed.powerWatt !== null) {
-      await prisma.energyReading.create({
-        data: {
-          deviceId: device.id,
-          powerWatt: parsed.powerWatt,
-          usageKwh: parsed.usageKwh,
-        },
-      });
-    }
-
-    emitDeviceStatus({
-      deviceId: device.id,
-      eui: device.eui,
-      roomId: device.roomId,
-      status: parsed.relayStatus || device.status,
-      powerWatt: parsed.powerWatt,
-      usageKwh: parsed.usageKwh,
-      timestamp: new Date().toISOString(),
-    });
+    await fetchAndStoreTelemetry(device, { timeout: PING_TIMEOUT_MS });
   } catch (err) {
     logger.warn(
       `[TelemetryPoller] Gagal poll "${device.name}" (${device.tbDeviceId}): ${err.message}`,
@@ -61,9 +29,7 @@ let isRunning = false;
 
 async function runTick() {
   if (isRunning) {
-    logger.warn(
-      "[TelemetryPoller] Tick sebelumnya masih jalan, skip tick ini",
-    );
+    logger.warn("[TelemetryPoller] Tick sebelumnya masih jalan, skip tick ini");
     return;
   }
 
@@ -73,7 +39,8 @@ async function runTick() {
     const devices = await prisma.device.findMany({
       where: { tbDeviceId: { not: null } },
     });
-    const due = devices.filter((d) => isDue(d, now));
+
+    const due = devices.filter((d) => isDue(d, now) && !isDeviceBusy(d.id));
 
     await Promise.all(due.map((device) => pollDevice(device)));
   } finally {

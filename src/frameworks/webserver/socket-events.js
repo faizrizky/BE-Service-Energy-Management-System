@@ -14,6 +14,7 @@ module.exports = {
   emitDeviceUpdated: (device) => emit("device:updated", { device }),
   emitDeviceDeleted: (deviceId) => emit("device:deleted", { deviceId }),
   emitDeviceStatus: (payload) => emit("device:status", payload),
+  emitDeviceCommand: (payload) => emit("device:command", payload),
 
   emitRoomCreated: (room) => emit("room:created", { room }),
   emitRoomUpdated: (room) => emit("room:updated", { room }),

@@ -73,6 +73,40 @@ async function power(req, res, next) {
     const result = await deviceUseCase.powerDevice(req.params.id, action, {
       userId: req.user.id,
     });
+
+    res.status(result.status === "pending" ? 202 : 200).json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function cancelPower(req, res, next) {
+  try {
+    const result = await deviceUseCase.cancelRelayCommand(req.params.id);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function ping(req, res, next) {
+  try {
+    const { timeout } = req.body || {};
+    const result = await deviceUseCase.pingDevice(req.params.id, {
+      timeout: timeout ? Number(timeout) : undefined,
+    });
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function interval(req, res, next) {
+  try {
+    const result = await deviceUseCase.setDeviceInterval(req.params.id, {
+      intervalMinutes: Number(req.body.intervalMinutes),
+      userId: req.user.id,
+    });
     res.json({ data: result });
   } catch (err) {
     next(err);
@@ -81,9 +115,7 @@ async function power(req, res, next) {
 
 async function chirpstackMetadata(req, res, next) {
   try {
-    const data = await deviceUseCase.getDeviceChirpstackMetadata(
-      req.params.id,
-    );
+    const data = await deviceUseCase.getDeviceChirpstackMetadata(req.params.id);
     res.json({ data });
   } catch (err) {
     next(err);
@@ -124,6 +156,9 @@ module.exports = {
   update,
   destroy,
   power,
+  cancelPower,
+  ping,
+  interval,
   chirpstackCandidates,
   chirpstackMetadata,
   telemetryHistory,

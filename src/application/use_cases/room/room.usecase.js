@@ -1,16 +1,15 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
-const { setRelay } = require("../../../frameworks/chirpstack/client");
 const {
-  parseRelayResponse,
-} = require("../../../frameworks/chirpstack/contract");
+  requestRelayCommand,
+  getPendingCommandsByDevice,
+} = require("../device/device.usecase");
+const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
   emitRoomCreated,
   emitRoomUpdated,
   emitRoomDeleted,
   emitRoomPower,
 } = require("../../../frameworks/webserver/socket-events");
-
-const RELAY_CONFIRM_WAIT_MS = 60000;
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -63,6 +62,10 @@ async function listRoomsPaginated({
     }),
   ]);
 
+  const pendingByDevice = await getPendingCommandsByDevice(
+    rooms.flatMap((room) => room.devices.map((d) => d.id)),
+  );
+
   const now = new Date();
   const data = await Promise.all(
     rooms.map(async (room) => {
@@ -81,6 +84,9 @@ async function listRoomsPaginated({
           usagePerDevice.reduce((s, v) => s + v, 0).toFixed(2),
         ),
         isPowerOn: room.devices.some((d) => d.status === "on"),
+        pendingCommandCount: room.devices.filter((d) =>
+          pendingByDevice.has(d.id),
+        ).length,
         isCritical: room.isCritical,
       };
     }),
@@ -196,6 +202,9 @@ async function getRoomById(
   ]);
 
   const since = new Date(Date.now() - ONE_DAY_MS);
+  const pendingByDevice = await getPendingCommandsByDevice(
+    devices.map((d) => d.id),
+  );
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => {
@@ -212,6 +221,7 @@ async function getRoomById(
         totalUsage24hKwh: Number(totalKwh.toFixed(2)),
         intervalMinutes: device.intervalMinutes,
         isPowerOn: device.status === "on",
+        pendingCommand: pendingByDevice.get(device.id) ?? null,
       };
     }),
   );
@@ -279,6 +289,10 @@ async function listDevicesInRoom(
     }),
   ]);
 
+  const pendingByDevice = await getPendingCommandsByDevice(
+    devices.map((d) => d.id),
+  );
+
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
       id: device.id,
@@ -290,6 +304,7 @@ async function listDevicesInRoom(
       ),
       intervalMinutes: device.intervalMinutes,
       isPowerOn: device.status === "on",
+      pendingCommand: pendingByDevice.get(device.id) ?? null,
     })),
   );
 
@@ -450,11 +465,11 @@ async function updateRoom(id, data) {
 async function deleteRoom(id) {
   const deviceCount = await prisma.device.count({ where: { roomId: id } });
   if (deviceCount > 0) {
-    const err = new Error(
-      `Room tidak bisa dihapus karena masih memiliki ${deviceCount} device. Pindahkan atau hapus device tersebut terlebih dahulu.`,
+    throw httpError(
+      `Room tidak bisa dihapus karena masih memiliki ${deviceCount} device. ` +
+        "Pindahkan atau hapus device tersebut terlebih dahulu.",
+      409,
     );
-    err.status = 409;
-    throw err;
   }
 
   const deleted = await prisma.$transaction(async (tx) => {
@@ -468,69 +483,28 @@ async function deleteRoom(id) {
 }
 
 async function powerRoom(roomId, action, options = {}) {
-  const { userId = null, scheduleId = null } = options;
-  const triggerType = scheduleId ? "scheduled" : "manual";
-
   const room = await prisma.room.findUnique({
     where: { id: roomId },
     include: { devices: true },
   });
 
-  if (!room) {
-    const err = new Error("Room tidak ditemukan");
-    err.status = 404;
-    throw err;
-  }
+  if (!room) throw httpError("Room tidak ditemukan", 404);
 
   const results = [];
 
   for (const device of room.devices) {
-    let status = "success";
-    let notes = null;
-
-    if (!device.tbDeviceId) {
-      status = "failed";
-      notes = "Device belum terhubung (devEUI kosong)";
-    } else {
-      try {
-        const raw = await setRelay(device.tbDeviceId, action === "on", {
-          relayTimeout: RELAY_CONFIRM_WAIT_MS,
-        });
-        if (!parseRelayResponse(raw).confirmed) {
-          status = "failed";
-          notes = "Relay belum terkonfirmasi oleh device";
-        }
-      } catch (err) {
-        status = "failed";
-        notes = err.message;
-      }
-    }
-
-    await prisma.commandLog.create({
-      data: {
-        roomId: room.id,
-        deviceId: device.id,
-        action,
-        triggerType,
-        triggeredByUserId: userId,
-        scheduleId,
-        status,
-        notes,
-      },
-    });
-
-    if (status === "success") {
-      await prisma.device.update({
-        where: { id: device.id },
-        data: { status: action },
-      });
-    }
-
-    results.push({ deviceId: device.id, status, notes });
+    results.push(await requestRelayCommand(device, action, options));
   }
+
+  const summary = {
+    total: results.length,
+    pending: results.filter((r) => r.status === "pending").length,
+    failed: results.filter((r) => r.status === "failed").length,
+  };
+
   emitRoomPower(roomId, results);
 
-  return { roomId, action, results };
+  return { roomId, action, results, summary };
 }
 
 function pad2(n) {
@@ -553,6 +527,12 @@ function buildLogDescription(log) {
   if (log.status === "failed") {
     return `Failed to turn ${actionLabel}${log.notes ? ` (${log.notes})` : ""}`;
   }
+  if (log.status === "pending") {
+    return `Turning ${actionLabel}, waiting for meter${log.notes ? ` (${log.notes})` : ""}`;
+  }
+  if (log.status === "cancelled") {
+    return `Command to turn ${actionLabel} cancelled${log.notes ? ` (${log.notes})` : ""}`;
+  }
   if (log.status === "gateway_offline") {
     return `Gateway offline, could not turn ${actionLabel}`;
   }
@@ -565,9 +545,7 @@ async function getDeviceLogs(roomId, deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
 
   if (!device || device.roomId !== roomId) {
-    const err = new Error("Device tidak ditemukan di room ini");
-    err.status = 404;
-    throw err;
+    throw httpError("Device tidak ditemukan di room ini", 404);
   }
 
   const logs = await prisma.commandLog.findMany({

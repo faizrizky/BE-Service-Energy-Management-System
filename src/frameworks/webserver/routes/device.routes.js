@@ -10,6 +10,8 @@ const {
   createDeviceSchema,
   updateDeviceSchema,
   powerActionSchema,
+  telemetryPingSchema,
+  intervalSchema,
 } = require("../../../application/validators/device.validator");
 
 router.use(authMiddleware);
@@ -39,6 +41,26 @@ router.post(
   powerLimiter,
   validate(powerActionSchema),
   controller.power,
+);
+router.post(
+  "/:id/power/cancel",
+  checkPermission("device", "power_control"),
+  controller.cancelPower,
+);
+
+router.post(
+  "/:id/telemetry",
+  checkPermission("device", "view"),
+  powerLimiter,
+  validate(telemetryPingSchema),
+  controller.ping,
+);
+router.post(
+  "/:id/interval",
+  checkPermission("device", "configure"),
+  powerLimiter,
+  validate(intervalSchema),
+  controller.interval,
 );
 router.get(
   "/:id/chirpstack-metadata",

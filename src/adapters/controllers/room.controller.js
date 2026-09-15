@@ -149,7 +149,7 @@ async function power(req, res, next) {
     const result = await roomUseCase.powerRoom(req.params.id, action, {
       userId: req.user.id,
     });
-    res.json({ data: result });
+    res.status(result.summary.pending > 0 ? 202 : 200).json({ data: result });
   } catch (err) {
     next(err);
   }

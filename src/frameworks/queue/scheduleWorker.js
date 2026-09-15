@@ -15,10 +15,8 @@ const connection = {
   password: config.redis.password,
 };
 
-// Batas catch-up: kalau server baru nyala / abis downtime lama
 const MAX_CATCHUP_MINUTES = 5;
 
-// State di memory: kapan terakhir kali worker ini beneran ngecek.
 let lastCheckedAt = null;
 
 /**
@@ -92,9 +90,15 @@ async function processMinute(minuteDate) {
     const targets = schedule.device ? [schedule.device] : schedule.room.devices;
 
     for (const device of targets) {
-      await deviceUseCase.powerDevice(device.id, action, {
-        scheduleId: schedule.id,
-      });
+      try {
+        await deviceUseCase.powerDevice(device.id, action, {
+          scheduleId: schedule.id,
+        });
+      } catch (err) {
+        logger.warn(
+          `[Scheduler] Schedule "${schedule.id}" gagal untuk device ${device.id}: ${err.message}`,
+        );
+      }
     }
 
     logger.info(

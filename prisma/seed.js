@@ -42,8 +42,6 @@ const PERMISSIONS = [
   ["role", "create"],
   ["role", "edit"],
   ["role", "delete"],
-  ["alarm", "view"],
-  ["alarm", "ack"],
 ];
 
 const ROLE_PERMISSIONS = {
@@ -73,10 +71,6 @@ const ROLE_PERMISSIONS = {
 
     // Report
     ["report", "view"],
-
-    // Alarm
-    ["alarm", "view"],
-    ["alarm", "ack"],
   ],
   Komandan: [
     // Energy monitoring
