@@ -7,8 +7,8 @@ const roomUseCase = require("../../application/use_cases/room/room.usecase");
  * Dipake di:
  * - room.routes.js → GET /api/rooms
  * - Frontend: roomsApi.list (halaman Rooms & dropdown di Device),
- *   roomsApi.listSummary (dropdown di Schedule), rooms/client.tsx →
- *   loadRooms.
+ *   roomsApi.listSummary (dropdown di Schedule), roomsClientApi.list
+ *   (rooms/client.tsx → loadRooms).
  */
 async function index(req, res, next) {
   try {

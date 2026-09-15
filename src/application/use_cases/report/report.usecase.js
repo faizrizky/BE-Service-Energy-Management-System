@@ -1,5 +1,8 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
+const {
+  getTodayInScheduleZone,
+} = require("../schedule/schedule-time.util");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 
@@ -496,8 +499,7 @@ async function getTopRiskyRooms(range) {
  *   /api/dashboard/schedules).
  */
 async function getActiveSchedules(status) {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const todayStart = getTodayInScheduleZone();
 
   const where = { status: "active" };
   if (status === "upcoming") {

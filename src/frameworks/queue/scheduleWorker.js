@@ -5,6 +5,7 @@ const logger = require("../helpers/logger");
 const deviceUseCase = require("../../application/use_cases/device/device.usecase");
 const {
   invertAction,
+  getZonedParts,
   isStartDue,
   isEndDue,
 } = require("../../application/use_cases/schedule/schedule-time.util");
@@ -66,7 +67,8 @@ function getMinutesToCheck(from, to) {
  * Dipake di: executeDueSchedules (file ini).
  */
 async function processMinute(minuteDate) {
-  const currentTime = minuteDate.toTimeString().slice(0, 5);
+  const timeZone = config.schedule.timezone;
+  const currentTime = getZonedParts(minuteDate, timeZone).time;
 
   const candidates = await prisma.schedule.findMany({
     where: {
@@ -82,15 +84,15 @@ async function processMinute(minuteDate) {
   const dueSchedules = candidates
     .map((schedule) => ({
       schedule,
-      startTrigger: isStartDue(schedule, minuteDate),
-      endTrigger: isEndDue(schedule, minuteDate),
+      startTrigger: isStartDue(schedule, minuteDate, timeZone),
+      endTrigger: isEndDue(schedule, minuteDate, timeZone),
     }))
     .filter(({ startTrigger, endTrigger }) => startTrigger || endTrigger);
 
   if (dueSchedules.length === 0) return;
 
   logger.info(
-    `[Scheduler] Cek jam ${currentTime} - ${dueSchedules.length} schedule jatuh tempo`,
+    `[Scheduler] Cek jam ${currentTime} (${timeZone}) - ${dueSchedules.length} schedule jatuh tempo`,
   );
 
   for (const { schedule, startTrigger, endTrigger } of dueSchedules) {

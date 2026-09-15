@@ -57,12 +57,30 @@ const config = {
     maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 5,
     lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10) || 15,
   },
+  schedule: {
+    timezone: process.env.SCHEDULE_TIMEZONE || "Asia/Jakarta",
+  },
 };
+
+/**
+ * Ngecek nama zona waktu IANA (misal "Asia/Jakarta") dikenal sama Intl.
+ *
+ * Dipake di: validateConfig (file ini).
+ */
+function isValidTimeZone(timeZone) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Ngecek env wajib (DATABASE_URL, JWT_SECRET, CHIRPSTACK_MIDDLEWARE_URL,
  * CHIRPSTACK_APPLICATION_ID) udah keisi. Kalo ada yang kosong, lempar error
- * sambil nyebutin env mana aja.
+ * sambil nyebutin env mana aja. SCHEDULE_TIMEZONE juga dicek harus zona waktu
+ * yang valid, biar schedule nggak diem-diem jalan di jam yang salah.
  *
  * Dipake di: app.js → bootstrap (paling awal, sebelum nyambung ke apa-apa).
  */
@@ -78,6 +96,12 @@ function validateConfig() {
 
   if (missing.length > 0) {
     throw new Error(`Environment variable belum diisi: ${missing.join(", ")}`);
+  }
+
+  if (!isValidTimeZone(config.schedule.timezone)) {
+    throw new Error(
+      `SCHEDULE_TIMEZONE tidak valid: "${config.schedule.timezone}" (contoh: Asia/Jakarta)`,
+    );
   }
 }
 

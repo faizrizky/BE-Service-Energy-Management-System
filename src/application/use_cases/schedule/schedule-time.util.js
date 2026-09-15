@@ -1,3 +1,5 @@
+const { config } = require("../../../config/config");
+
 const MINUTES_PER_DAY = 24 * 60;
 const WEEK_LENGTH_DAYS = 7;
 
@@ -22,26 +24,29 @@ function invertAction(action) {
 }
 
 /**
- * Buang jam dari tanggal (jadi jam 00:00 waktu lokal).
+ * Buang jam dari tanggal, hasilnya jam 00:00 UTC di tanggal (UTC) itu. Sengaja
+ * pake UTC karena scheduledDate disimpen dari "YYYY-MM-DD" (= 00:00 UTC), jadi
+ * hasilnya sama aja mau zona waktu server apa pun.
  *
  * Dipake di: toDateKey, addDays, getOccupiedDates, getScheduleStartDate,
  *   isOccurringOnDate (file ini).
  */
 function toDateOnly(date) {
   const d = new Date(date);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
 /**
- * Bikin kunci tanggal "YYYY-MM-DD" (waktu lokal) buat bandingin hari.
+ * Bikin kunci tanggal "YYYY-MM-DD" (tanggal UTC, lihat toDateOnly) buat
+ * bandingin hari.
  *
  * Dipake di: isOccurringOnDate (file ini).
  */
 function toDateKey(date) {
   const d = toDateOnly(date);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
@@ -52,8 +57,67 @@ function toDateKey(date) {
  */
 function addDays(date, amount) {
   const result = toDateOnly(date);
-  result.setDate(result.getDate() + amount);
+  result.setUTCDate(result.getUTCDate() + amount);
   return result;
+}
+
+const zonedFormatters = new Map();
+
+/**
+ * Ambil (atau bikin sekali terus disimpen) formatter Intl buat zona waktu
+ * tertentu, biar nggak bikin ulang tiap menit.
+ *
+ * Dipake di: getZonedParts (file ini).
+ */
+function getZonedFormatter(timeZone) {
+  if (!zonedFormatters.has(timeZone)) {
+    zonedFormatters.set(
+      timeZone,
+      new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }),
+    );
+  }
+  return zonedFormatters.get(timeZone);
+}
+
+/**
+ * Pecah waktu jadi tanggal & jam menurut zona waktu schedule (bukan zona waktu
+ * server). Balikin { date, dateKey, time } — date itu tanggalnya dalam format
+ * toDateOnly (00:00 UTC), time format "HH:mm".
+ *
+ * Dipake di: getTodayInScheduleZone, isStartDue, isEndDue (file ini),
+ *   scheduleWorker.js → processMinute.
+ */
+function getZonedParts(date, timeZone = config.schedule.timezone) {
+  const parts = Object.fromEntries(
+    getZonedFormatter(timeZone)
+      .formatToParts(date)
+      .map(({ type, value }) => [type, value]),
+  );
+  const dateKey = `${parts.year}-${parts.month}-${parts.day}`;
+  return {
+    date: new Date(`${dateKey}T00:00:00.000Z`),
+    dateKey,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
+/**
+ * Tanggal hari ini menurut zona waktu schedule (format toDateOnly), buat
+ * misahin schedule yang udah jalan sama yang upcoming.
+ *
+ * Dipake di: schedule.usecase.js → buildStatusWhere, report.usecase.js →
+ *   getActiveSchedules.
+ */
+function getTodayInScheduleZone(now = new Date()) {
+  return getZonedParts(now).date;
 }
 
 /**
@@ -110,7 +174,7 @@ function isOccurringOnDate(schedule, date) {
 
   if (schedule.repeatType === "weekly") {
     const days = Array.isArray(schedule.repeatDays) ? schedule.repeatDays : [];
-    return days.includes(day.getDay());
+    return days.includes(day.getUTCDay());
   }
 
   return false;
@@ -183,28 +247,31 @@ function timeRangesOverlap(aStart, aEnd, bStart, bEnd) {
 
 /**
  * Ngecek menit ini pas sama startTime schedule dan schedule-nya berlaku hari
- * ini.
+ * ini. Jam & tanggal "sekarang" diitung di zona waktu schedule
+ * (SCHEDULE_TIMEZONE), bukan zona waktu server.
  *
  * Dipake di: scheduleWorker.js → processMinute.
  */
-function isStartDue(schedule, now) {
-  const currentTime = now.toTimeString().slice(0, 5);
-  return schedule.startTime === currentTime && isOccurringOnDate(schedule, now);
+function isStartDue(schedule, now, timeZone = config.schedule.timezone) {
+  const { date, time } = getZonedParts(now, timeZone);
+  return schedule.startTime === time && isOccurringOnDate(schedule, date);
 }
 
 /**
- * Ngecek menit ini pas sama endTime schedule. Kalo schedule-nya nyebrang
- * tengah malem, hari mulainya dianggep kemarin.
+ * Ngecek menit ini pas sama endTime schedule (di zona waktu schedule). Kalo
+ * schedule-nya nyebrang tengah malem, hari mulainya dianggep kemarin.
  *
  * Dipake di: scheduleWorker.js → processMinute.
  */
-function isEndDue(schedule, now) {
+function isEndDue(schedule, now, timeZone = config.schedule.timezone) {
   if (!schedule.endTime) return false;
 
-  const currentTime = now.toTimeString().slice(0, 5);
-  if (schedule.endTime !== currentTime) return false;
+  const { date, time } = getZonedParts(now, timeZone);
+  if (schedule.endTime !== time) return false;
 
-  const startReferenceDate = isCrossMidnight(schedule) ? addDays(now, -1) : now;
+  const startReferenceDate = isCrossMidnight(schedule)
+    ? addDays(date, -1)
+    : date;
   return isOccurringOnDate(schedule, startReferenceDate);
 }
 
@@ -214,6 +281,8 @@ module.exports = {
   toDateOnly,
   toDateKey,
   addDays,
+  getZonedParts,
+  getTodayInScheduleZone,
   isCrossMidnight,
   getOccupiedDates,
   getScheduleStartDate,

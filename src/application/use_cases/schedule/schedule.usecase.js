@@ -2,6 +2,7 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
 const {
   timeRangesOverlap,
   occurrenceDatesOverlap,
+  getTodayInScheduleZone,
 } = require("./schedule-time.util");
 
 const {
@@ -19,15 +20,15 @@ const SAFE_USER_SELECT = {
 
 /**
  * Bikin filter Prisma buat status active (berulang atau udah mulai) atau
- * upcoming (sekali jalan setelah hari ini). Balikin null buat status lain.
+ * upcoming (sekali jalan setelah hari ini). "Hari ini" diitung di zona waktu
+ * schedule. Balikin null buat status lain.
  *
  * Dipake di: listSchedulesPaginated (file ini).
  */
 function buildStatusWhere(status) {
   if (status !== "active" && status !== "upcoming") return null;
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const todayStart = getTodayInScheduleZone();
 
   if (status === "upcoming") {
     return {
