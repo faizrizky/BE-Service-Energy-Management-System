@@ -9,7 +9,6 @@ jest.mock("../../../src/application/use_cases/device/device.usecase", () => ({
   updateDevice: jest.fn(),
   deleteDevice: jest.fn(),
   powerDevice: jest.fn(),
-  cancelRelayCommand: jest.fn(),
   pingDevice: jest.fn(),
   setDeviceInterval: jest.fn(),
   listChirpstackDeviceCandidates: jest.fn(),
@@ -209,14 +208,6 @@ describe("device.controller", () => {
     expect(deviceUC.powerDevice).not.toHaveBeenCalled();
   });
   expectErrorForwarding(device.power, deviceUC.powerDevice, { body: { action: "on" } });
-
-  test("[positive] cancelPower", async () => {
-    deviceUC.cancelRelayCommand.mockResolvedValue({ cancelled: [] });
-    const { res } = await call(device.cancelPower, { params: { id: "d1" } });
-    expect(deviceUC.cancelRelayCommand).toHaveBeenCalledWith("d1");
-    expect(res.json).toHaveBeenCalledWith({ data: { cancelled: [] } });
-  });
-  expectErrorForwarding(device.cancelPower, deviceUC.cancelRelayCommand);
 
   test("[positive/negative] ping: timeout di-convert, tanpa body -> undefined", async () => {
     deviceUC.pingDevice.mockResolvedValue({});

@@ -19,6 +19,8 @@ const ENV_KEYS = [
   "CHIRPSTACK_MIDDLEWARE_URL",
   "CHIRPSTACK_APPLICATION_ID",
   "SCHEDULE_TIMEZONE",
+  "CHIRPSTACK_SYNC_DELETE",
+  "DEVICE_ONLINE_GRACE_SECONDS",
 ];
 
 let snapshot;
@@ -76,6 +78,8 @@ describe("config defaults & parsing", () => {
     expect(config.turnstile.enabled).toBe(false);
     expect(config.loginSecurity.maxFailedAttempts).toBe(5);
     expect(config.schedule.timezone).toBe("Asia/Jakarta");
+    expect(config.deviceOnline.graceMs).toBe(120000);
+    expect(config.chirpstack.syncDelete).toBe(true);
   });
 
   test("[positive] nilai env valid di-parse ke tipe yang benar", () => {
@@ -116,6 +120,14 @@ describe("validateConfig", () => {
   test("[positive] semua env wajib terisi -> tidak melempar", () => {
     const { validateConfig } = loadConfig();
     expect(() => validateConfig()).not.toThrow();
+  });
+
+  test('[negative] CHIRPSTACK_SYNC_DELETE="false" -> penghapusan otomatis dimatikan', () => {
+    expect(loadConfig({ CHIRPSTACK_SYNC_DELETE: "false" }).config.chirpstack.syncDelete).toBe(false);
+  });
+
+  test("[positive] DEVICE_ONLINE_GRACE_SECONDS dipakai buat jendela online", () => {
+    expect(loadConfig({ DEVICE_ONLINE_GRACE_SECONDS: "30" }).config.deviceOnline.graceMs).toBe(30000);
   });
 
   test("[positive] SCHEDULE_TIMEZONE valid (misal UTC) -> tidak melempar", () => {

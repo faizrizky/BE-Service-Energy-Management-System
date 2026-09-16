@@ -1,6 +1,8 @@
 jest.mock("../../../../src/application/use_cases/device/device.usecase", () => ({
   requestRelayCommand: jest.fn(),
   getPendingCommandsByDevice: jest.fn(),
+  getUncertainStatusDeviceIds: jest.fn(),
+  getResyncStateByDevice: jest.fn(),
 }));
 jest.mock("../../../../src/frameworks/webserver/socket-events", () => ({
   emitRoomCreated: jest.fn(),
@@ -20,9 +22,8 @@ const minutesAgo = (m) => new Date(Date.now() - m * 60000);
 function device(overrides = {}) {
   return {
     id: "d1",
-    eui: "E1",
     name: "AC",
-    tbDeviceId: "08000000410000e4",
+    eui: "08000000410000e4",
     deviceType: "AC",
     status: "off",
     intervalMinutes: 15,
@@ -52,6 +53,8 @@ beforeEach(() => {
   resetPrismaMock(prisma);
   jest.clearAllMocks();
   deviceUseCase.getPendingCommandsByDevice.mockResolvedValue(new Map());
+  deviceUseCase.getUncertainStatusDeviceIds.mockResolvedValue(new Set());
+  deviceUseCase.getResyncStateByDevice.mockReturnValue(new Map());
 });
 
 describe("listRoomsPaginated", () => {
@@ -76,7 +79,7 @@ describe("listRoomsPaginated", () => {
     const result = await roomUseCase.listRoomsPaginated();
 
     expect(deviceUseCase.getPendingCommandsByDevice).toHaveBeenCalledWith(["d1", "d2", "d3"]);
-    expect(result.data[0]).toEqual({
+    expect(result.data[0]).toMatchObject({
       id: "r1",
       name: "Server",
       location: "Lt 1",
@@ -84,6 +87,9 @@ describe("listRoomsPaginated", () => {
       devicesOnline: 1,
       devicesOffline: 2,
       totalUsage24hKwh: 0.9,
+      statusUncertain: false,
+      statusResync: null,
+      pendingResync: null,
       isPowerOn: true,
       pendingCommandCount: 1,
       isCritical: true,
@@ -112,6 +118,68 @@ describe("listRoomsPaginated", () => {
     expect(prisma.energyReading.findFirst).not.toHaveBeenCalled();
   });
 
+  // Satu device yang statusnya belum pasti bikin switch room ikut dikunci.
+  test("[positive] ada device yang statusnya belum pasti -> room ikut ditandai", async () => {
+    prisma.room.count.mockResolvedValue(1);
+    prisma.room.findMany.mockResolvedValue([
+      { id: "r1", name: "Server", location: "L", isCritical: false, devices: [device({ id: "d1" }), device({ id: "d2" })] },
+    ]);
+    mockReadings({});
+    deviceUseCase.getUncertainStatusDeviceIds.mockResolvedValue(new Set(["d2"]));
+
+    const result = await roomUseCase.listRoomsPaginated();
+
+    expect(result.data[0].statusUncertain).toBe(true);
+  });
+
+  // Progres resync dipakai UI buat nampilin "Resync in 12s".
+  test("[positive] progres resync device ikut dikirim di baris room", async () => {
+    prisma.room.count.mockResolvedValue(1);
+    prisma.room.findMany.mockResolvedValue([{ id: "r1", devices: [device({ id: "d1" }), device({ id: "d2" })] }]);
+    mockReadings({});
+    deviceUseCase.getUncertainStatusDeviceIds.mockResolvedValue(new Set(["d2"]));
+    deviceUseCase.getResyncStateByDevice.mockReturnValue(
+      new Map([
+        ["d1", { attempt: 5, maxAttempts: 20, nextRetryAt: "2026-09-16T10:00:30.000Z" }],
+        ["d2", { attempt: 3, maxAttempts: 20, nextRetryAt: "2026-09-16T10:00:10.000Z" }],
+      ]),
+    );
+
+    const [row] = (await roomUseCase.listRoomsPaginated()).data;
+
+    // Yang paling duluan dicoba lagi yang ditampilkan.
+    expect(row.statusResync).toMatchObject({ attempt: 3, nextRetryAt: "2026-09-16T10:00:10.000Z" });
+  });
+
+  test("[positive] device yang lagi nungguin uplink didahulukan dari yang lagi jeda", async () => {
+    prisma.room.count.mockResolvedValue(1);
+    prisma.room.findMany.mockResolvedValue([{ id: "r1", devices: [device({ id: "d1" }), device({ id: "d2" })] }]);
+    mockReadings({});
+    deviceUseCase.getResyncStateByDevice.mockReturnValue(
+      new Map([
+        ["d1", { attempt: 2, maxAttempts: 20, nextRetryAt: "2026-09-16T10:00:10.000Z" }],
+        ["d2", { attempt: 4, maxAttempts: 20, nextRetryAt: null }],
+      ]),
+    );
+
+    const [row] = (await roomUseCase.listRoomsPaginated()).data;
+    expect(row.statusResync).toMatchObject({ attempt: 4, nextRetryAt: null });
+  });
+
+  test("[negative] tidak ada resync jalan -> statusResync null", async () => {
+    prisma.room.count.mockResolvedValue(1);
+    prisma.room.findMany.mockResolvedValue([{ id: "r1", devices: [device()] }]);
+    mockReadings({});
+    expect((await roomUseCase.listRoomsPaginated()).data[0].statusResync).toBeNull();
+  });
+
+  test("[negative] semua device statusnya jelas -> room tidak ditandai", async () => {
+    prisma.room.count.mockResolvedValue(1);
+    prisma.room.findMany.mockResolvedValue([{ id: "r1", devices: [device()] }]);
+    mockReadings({});
+    expect((await roomUseCase.listRoomsPaginated()).data[0].statusUncertain).toBe(false);
+  });
+
   test("[positive] search & rentang tanggal & paginasi", async () => {
     prisma.room.count.mockResolvedValue(0);
     prisma.room.findMany.mockResolvedValue([]);
@@ -133,7 +201,7 @@ describe("getRoomById", () => {
     prisma.room.findUnique.mockResolvedValue({ id: "r1", name: "Server", updatedAt: new Date("2026-09-14") });
     prisma.device.count.mockResolvedValue(1);
     prisma.device.findMany
-      .mockResolvedValueOnce([device({ status: "on", tbDeviceId: null })])
+      .mockResolvedValueOnce([device({ status: "on" })])
       .mockResolvedValueOnce([device()]);
     mockReadings({ d1: { latest: 208, earliest: 205 } });
     deviceUseCase.getPendingCommandsByDevice.mockResolvedValue(new Map([["d1", { id: "c1", action: "off" }]]));
@@ -141,15 +209,17 @@ describe("getRoomById", () => {
     const room = await roomUseCase.getRoomById("r1");
 
     expect(room.lastUpdatedAt).toEqual(new Date("2026-09-14"));
-    expect(room.devices.data[0]).toEqual({
+    expect(room.devices.data[0]).toMatchObject({
       id: "d1",
-      tbDeviceId: "E1",
-      deviceEui: "E1",
+      deviceEui: "08000000410000e4",
       deviceType: "AC",
       totalUsage24hKwh: 3,
       intervalMinutes: 15,
       isPowerOn: true,
       pendingCommand: { id: "c1", action: "off" },
+      statusUncertain: false,
+      statusResync: null,
+      isOnline: true,
     });
     expect(room.usage.highestComponent).toEqual({ name: "AC", kwh: 3 });
   });
@@ -168,7 +238,7 @@ describe("getRoomById", () => {
 describe("listDevicesInRoom", () => {
   test("[positive] selalu difilter roomId; search angka ikut mencocokkan interval", async () => {
     prisma.device.count.mockResolvedValue(1);
-    prisma.device.findMany.mockResolvedValue([device({ tbDeviceId: "08000000410000e4" })]);
+    prisma.device.findMany.mockResolvedValue([device({ eui: "08000000410000e4" })]);
     mockReadings({ d1: { latest: 12.345, earliest: 10 } });
     deviceUseCase.getPendingCommandsByDevice.mockResolvedValue(new Map());
 
@@ -177,7 +247,7 @@ describe("listDevicesInRoom", () => {
     const { where } = prisma.device.findMany.mock.calls[0][0];
     expect(where.AND[0]).toEqual({ roomId: "r1" });
     expect(where.AND[1].OR).toContainEqual({ intervalMinutes: 30 });
-    expect(result.data[0]).toMatchObject({ tbDeviceId: "08000000410000e4", totalUsage24hKwh: 2.35, pendingCommand: null });
+    expect(result.data[0]).toMatchObject({ deviceEui: "08000000410000e4", totalUsage24hKwh: 2.35, pendingCommand: null });
   });
 
   test("[negative] search teks tidak menambah filter interval", async () => {
@@ -185,7 +255,7 @@ describe("listDevicesInRoom", () => {
     prisma.device.findMany.mockResolvedValue([]);
     await roomUseCase.listDevicesInRoom("r1", { search: "AC", createdFrom: "2026-09-01" });
     const { where } = prisma.device.findMany.mock.calls[0][0];
-    expect(where.AND[1].OR).toHaveLength(3);
+    expect(where.AND[1].OR).toHaveLength(2);
     expect(where.AND[2].createdAt.gte).toEqual(new Date("2026-09-01"));
   });
 
@@ -241,7 +311,7 @@ describe("listRoomsSummary & getRoomStats", () => {
     mockReadings({});
     const [row] = await roomUseCase.listRoomsSummary({ search: "Ser" });
     expect(prisma.room.findMany.mock.calls[0][0].where).toEqual({ name: { contains: "Ser", mode: "insensitive" } });
-    expect(row).toMatchObject({ gatewayEui: "GW", deviceOnlineCount: 1, status: "on" });
+    expect(row).toMatchObject({ gatewayEui: "GW", deviceOnlineCount: 1, status: "on", statusUncertain: false });
   });
 
   test("[negative] tanpa search -> where undefined; room tanpa device -> gatewayEui null & off", async () => {
@@ -251,9 +321,14 @@ describe("listRoomsSummary & getRoomStats", () => {
     expect(row).toMatchObject({ gatewayEui: null, status: "off" });
   });
 
-  test("[positive] statistik: gateway online jika punya minimal satu device online", async () => {
+  // Status gateway sekarang datang dari ChirpStack (kolom status), bukan ditebak dari device.
+  test("[positive] statistik: gateway online ngikutin status dari ChirpStack", async () => {
     prisma.room.count.mockResolvedValue(4);
-    prisma.gateway.findMany.mockResolvedValue([{ id: "g1" }, { id: "g2" }, { id: "g3" }]);
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g1", status: "online" },
+      { id: "g2", status: "offline" },
+      { id: "g3", status: "offline" },
+    ]);
     prisma.device.findMany.mockResolvedValue([
       { id: "d1", gatewayId: "g1", lastSeenAt: minutesAgo(1), intervalMinutes: 15 },
       { id: "d2", gatewayId: "g1", lastSeenAt: null, intervalMinutes: 15 },
@@ -314,7 +389,7 @@ describe("powerRoom", () => {
   });
 
   test("[positive] setiap device dimasukkan antrean & ringkasan pending/failed", async () => {
-    const devices = [device({ id: "d1" }), device({ id: "d2", tbDeviceId: null })];
+    const devices = [device({ id: "d1" }), device({ id: "d2", eui: null })];
     prisma.room.findUnique.mockResolvedValue({ id: "r1", devices });
     deviceUseCase.requestRelayCommand
       .mockResolvedValueOnce({ deviceId: "d1", status: "pending" })

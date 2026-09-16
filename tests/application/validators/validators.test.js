@@ -80,7 +80,8 @@ describe("auth.validator", () => {
 
 describe("device.validator", () => {
   const valid = {
-    eui: "DEV-001",
+    // eui device = devEUI ChirpStack (16 hex), nggak ada lagi ThingsBoard device ID.
+    eui: "08000000410000e4",
     name: "AC Ruang Server",
     roomId: UUID,
     gatewayId: UUID_2,
@@ -90,17 +91,16 @@ describe("device.validator", () => {
     expect(ok(createDeviceSchema, valid)).toEqual(valid);
   });
 
-  test("[positive] tbDeviceId devEUI 16 hex (huruf besar/kecil), null, atau string kosong", () => {
-    ok(createDeviceSchema, { ...valid, tbDeviceId: "08000000410000e4" });
-    ok(createDeviceSchema, { ...valid, tbDeviceId: "08000000410000E4" });
-    ok(createDeviceSchema, { ...valid, tbDeviceId: null });
-    ok(createDeviceSchema, { ...valid, tbDeviceId: "" });
+  test("[positive] eui 16 hex, huruf besar/kecil sama-sama boleh", () => {
+    ok(createDeviceSchema, { ...valid, eui: "08000000410000e4" });
+    ok(createDeviceSchema, { ...valid, eui: "08000000410000E4" });
   });
 
-  test("[negative] tbDeviceId bukan 16 hex", () => {
-    fails(createDeviceSchema, { ...valid, tbDeviceId: "0800000041" });
-    fails(createDeviceSchema, { ...valid, tbDeviceId: "zz000000410000e4" });
-    fails(createDeviceSchema, { ...valid, tbDeviceId: "08000000410000e4ff" });
+  test("[negative] eui bukan devEUI 16 hex", () => {
+    fails(createDeviceSchema, { ...valid, eui: "DEV-001" });
+    fails(createDeviceSchema, { ...valid, eui: "0800000041" });
+    fails(createDeviceSchema, { ...valid, eui: "zz000000410000e4" });
+    fails(createDeviceSchema, { ...valid, eui: "08000000410000e4ff" });
   });
 
   test("[positive] intervalMinutes di-coerce dari string & batas 15..1440 inklusif", () => {
@@ -119,7 +119,7 @@ describe("device.validator", () => {
 
   test("[negative] field wajib kosong & roomId/gatewayId bukan UUID", () => {
     expect(messages(createDeviceSchema, { ...valid, eui: "", name: "" })).toEqual([
-      "eui wajib diisi",
+      "eui harus devEUI ChirpStack (16 karakter hex)",
       "name wajib diisi",
     ]);
     expect(messages(createDeviceSchema, { ...valid, roomId: "room-1" })).toEqual(["Room Id tidak valid"]);

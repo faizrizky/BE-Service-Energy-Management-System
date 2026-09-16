@@ -1,3 +1,6 @@
+jest.mock("../../../../src/frameworks/chirpstack/client", () => ({
+  listGateways: jest.fn(),
+}));
 jest.mock("../../../../src/frameworks/webserver/socket-events", () => ({
   emitGatewayCreated: jest.fn(),
   emitGatewayUpdated: jest.fn(),
@@ -10,6 +13,7 @@ const gatewayUseCase = require("../../../../src/application/use_cases/gateway/ga
 const { resetPrismaMock } = require("../../../helpers/prisma");
 
 const minutesAgo = (m) => new Date(Date.now() - m * 60000);
+const cs = require("../../../../src/frameworks/chirpstack/client");
 
 beforeEach(() => {
   resetPrismaMock(prisma);
@@ -17,27 +21,47 @@ beforeEach(() => {
 });
 
 describe("listGatewaysPaginated", () => {
-  test("[positive] status online kalau ada device yang lastSeen <= 2x interval", async () => {
+  // Status gateway datang dari ChirpStack, bukan ditebak dari device-nya.
+  test("[positive] status & lastSeenAt ngikutin ChirpStack", async () => {
     prisma.gateway.count.mockResolvedValue(2);
     prisma.gateway.findMany.mockResolvedValue([
-      { id: "g1", devices: [{ lastSeenAt: minutesAgo(29), intervalMinutes: 15 }, { lastSeenAt: null, intervalMinutes: 15 }] },
-      { id: "g2", devices: [{ lastSeenAt: minutesAgo(31), intervalMinutes: 15 }] },
+      { id: "g1", eui: "7276ff0045060ffb", devices: [] },
+      { id: "g2", eui: "aaaaaaaaaaaaaaaa", devices: [] },
     ]);
+    cs.listGateways.mockResolvedValue({
+      data: {
+        result: [
+          { gatewayId: "7276FF0045060FFB", name: "Kerlink", lastSeenAt: "2026-09-16T08:18:26.260Z", state: 1 },
+        ],
+      },
+    });
 
     const result = await gatewayUseCase.listGatewaysPaginated();
 
-    expect(result.data).toEqual([
-      { id: "g1", status: "online" },
-      { id: "g2", status: "offline" },
-    ]);
+    expect(result.data[0]).toMatchObject({
+      id: "g1",
+      status: "online",
+      chirpstack: { registered: true, name: "Kerlink" },
+    });
+    // Nggak ada di ChirpStack -> offline & ditandai belum terdaftar.
+    expect(result.data[1]).toMatchObject({
+      id: "g2",
+      status: "offline",
+      chirpstack: { registered: false },
+    });
     expect(result.data[0].devices).toBeUndefined();
     expect(result).toMatchObject({ page: 1, rowsPerPage: 10, totalRows: 2, totalPages: 1 });
   });
 
-  test("[negative] gateway tanpa device -> offline", async () => {
+  test("[negative] middleware mati -> pakai status terakhir dari database", async () => {
     prisma.gateway.count.mockResolvedValue(1);
-    prisma.gateway.findMany.mockResolvedValue([{ id: "g1", devices: [] }]);
-    expect((await gatewayUseCase.listGatewaysPaginated()).data[0].status).toBe("offline");
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g1", eui: "7276ff0045060ffb", status: "online", devices: [] },
+    ]);
+    cs.listGateways.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const [row] = (await gatewayUseCase.listGatewaysPaginated()).data;
+    expect(row).toMatchObject({ status: "online", chirpstack: null });
   });
 
   test("[positive] search di 5 kolom + rentang tanggal + paginasi", async () => {
@@ -68,9 +92,17 @@ describe("listGatewaysPaginated", () => {
 });
 
 describe("getGatewayById", () => {
-  test("[positive] detail dengan status terhitung", async () => {
-    prisma.gateway.findUnique.mockResolvedValue({ id: "g1", devices: [{ lastSeenAt: minutesAgo(1), intervalMinutes: 15 }] });
-    await expect(gatewayUseCase.getGatewayById("g1")).resolves.toMatchObject({ id: "g1", status: "online" });
+  test("[positive] detail ikut bawa data ChirpStack", async () => {
+    prisma.gateway.findUnique.mockResolvedValue({ id: "g1", eui: "7276ff0045060ffb", devices: [] });
+    cs.listGateways.mockResolvedValue({
+      data: { result: [{ gatewayId: "7276ff0045060ffb", name: "Kerlink", lastSeenAt: "2026-09-16T08:18:26.260Z", state: 1 }] },
+    });
+
+    await expect(gatewayUseCase.getGatewayById("g1")).resolves.toMatchObject({
+      id: "g1",
+      status: "online",
+      chirpstack: { registered: true, name: "Kerlink" },
+    });
   });
 
   test("[negative] tidak ditemukan -> null", async () => {
@@ -159,5 +191,134 @@ describe("deleteGateway", () => {
     });
     expect(prisma.gateway.delete).not.toHaveBeenCalled();
     expect(events.emitGatewayDeleted).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncGatewaysFromChirpstack", () => {
+  const csGateway = (overrides = {}) => ({
+    gatewayId: "7276FF0045060FFB",
+    name: "Kerlink",
+    lastSeenAt: "2026-09-16T08:18:26.260Z",
+    state: 1,
+    ...overrides,
+  });
+
+  test("[positive] status & lastSeenAt diambil dari ChirpStack (EUI beda huruf besar/kecil tetap cocok)", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g1", eui: "7276ff0045060ffb", status: "offline", lastSeenAt: null },
+    ]);
+    prisma.gateway.update.mockImplementation(async ({ data }) => ({ id: "g1", ...data }));
+
+    const result = await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.update).toHaveBeenCalledWith({
+      where: { id: "g1" },
+      data: { status: "online", lastSeenAt: new Date("2026-09-16T08:18:26.260Z") },
+    });
+    expect(events.emitGatewayUpdated).toHaveBeenCalled();
+    expect(result).toEqual({ checked: 1, updated: 1, created: 0, removed: 0 });
+  });
+
+  // Gateway yang ada di ChirpStack tapi belum ada di EMS didaftarkan otomatis.
+  test("[positive] gateway baru dari ChirpStack otomatis ditambahkan ke EMS", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([]);
+    prisma.gateway.create.mockImplementation(async ({ data }) => ({ id: "new", ...data }));
+
+    const result = await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.create).toHaveBeenCalledWith({
+      data: {
+        eui: "7276ff0045060ffb",
+        name: "Kerlink",
+        description: null,
+        status: "online",
+        lastSeenAt: new Date("2026-09-16T08:18:26.260Z"),
+      },
+    });
+    expect(events.emitGatewayCreated).toHaveBeenCalled();
+    expect(result).toMatchObject({ created: 1 });
+  });
+
+  test("[negative] gateway yang sudah ada di EMS nggak dibikin dobel", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      {
+        id: "g1",
+        eui: "7276FF0045060FFB",
+        status: "online",
+        lastSeenAt: new Date("2026-09-16T08:18:26.260Z"),
+      },
+    ]);
+
+    await gatewayUseCase.syncGatewaysFromChirpstack();
+    expect(prisma.gateway.create).not.toHaveBeenCalled();
+  });
+
+  test("[positive] state selain ONLINE -> offline", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway({ state: 2 })] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g1", eui: "7276ff0045060ffb", status: "online", lastSeenAt: null },
+    ]);
+    prisma.gateway.update.mockImplementation(async ({ data }) => ({ id: "g1", ...data }));
+
+    await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.update.mock.calls[0][0].data.status).toBe("offline");
+  });
+
+  test("[negative] nggak ada yang berubah -> nggak nulis ke database", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      {
+        id: "g1",
+        eui: "7276ff0045060ffb",
+        status: "online",
+        lastSeenAt: new Date("2026-09-16T08:18:26.260Z"),
+      },
+    ]);
+
+    const result = await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.update).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+  });
+
+  // Dihapus di ChirpStack -> ikut dihapus di EMS.
+  test("[positive] gateway yang udah nggak ada di ChirpStack & nggak punya device -> dihapus", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g9", eui: "aaaaaaaaaaaaaaaa", name: "Lama", status: "offline", lastSeenAt: null },
+    ]);
+    prisma.device.count.mockResolvedValue(0);
+    prisma.gateway.delete.mockResolvedValue({ id: "g9" });
+
+    const result = await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.delete).toHaveBeenCalledWith({ where: { id: "g9" } });
+    expect(events.emitGatewayDeleted).toHaveBeenCalledWith("g9");
+    expect(result).toMatchObject({ removed: 1 });
+  });
+
+  test("[negative] gateway hilang tapi masih punya device -> nggak dihapus, cuma diperingatin", async () => {
+    cs.listGateways.mockResolvedValue({ data: { result: [csGateway()] } });
+    prisma.gateway.findMany.mockResolvedValue([
+      { id: "g9", eui: "aaaaaaaaaaaaaaaa", name: "Lama", status: "offline", lastSeenAt: null },
+    ]);
+    prisma.device.count.mockResolvedValue(2);
+
+    const result = await gatewayUseCase.syncGatewaysFromChirpstack();
+
+    expect(prisma.gateway.delete).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ removed: 0 });
+  });
+
+  test("[negative] middleware mati -> nggak ngubah apa-apa & nggak lempar error", async () => {
+    cs.listGateways.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(gatewayUseCase.syncGatewaysFromChirpstack()).resolves.toEqual({ checked: 0, updated: 0, created: 0, removed: 0 });
+    expect(prisma.gateway.update).not.toHaveBeenCalled();
+    expect(prisma.gateway.create).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,6 @@ jest.mock("../../src/application/use_cases/authentication/login.usecase", () => 
 jest.mock("../../src/application/use_cases/device/device.usecase", () => ({
   listDevicesPaginated: jest.fn(),
   powerDevice: jest.fn(),
-  cancelRelayCommand: jest.fn(),
   getDeviceById: jest.fn(),
 }));
 jest.mock("../../src/application/use_cases/room/room.usecase", () => ({ powerRoom: jest.fn() }));
@@ -205,13 +204,6 @@ describe("power device & room", () => {
     const res = await request("POST", `/api/devices/${DEVICE_ID}/power`, { body: { action: "off" } });
     expect(res.status).toBe(500);
     expect(res.body.message).toBe("Terjadi kesalahan pada server");
-  });
-
-  test("[positive/negative] cancel: 200 kalau ada pending, 404 kalau tidak", async () => {
-    deviceUC.cancelRelayCommand.mockResolvedValueOnce({ cancelled: [{}] });
-    expect((await request("POST", `/api/devices/${DEVICE_ID}/power/cancel`)).status).toBe(200);
-    deviceUC.cancelRelayCommand.mockRejectedValueOnce(Object.assign(new Error("Tidak ada perintah"), { status: 404 }));
-    expect((await request("POST", `/api/devices/${DEVICE_ID}/power/cancel`)).status).toBe(404);
   });
 
   test("[positive] route telemetry & interval sudah benar (/:id/..), bukan 404", async () => {

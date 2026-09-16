@@ -92,7 +92,7 @@ describe("telemetryPollerJob", () => {
 
     await poller.runTick();
 
-    expect(prisma.device.findMany).toHaveBeenCalledWith({ where: { tbDeviceId: { not: null } } });
+    expect(prisma.device.findMany).toHaveBeenCalledWith({ where: { eui: { not: "" } } });
     expect(deviceUseCase.fetchAndStoreTelemetry.mock.calls.map(([d]) => d.id)).toEqual(["never", "due"]);
     expect(deviceUseCase.fetchAndStoreTelemetry).toHaveBeenCalledWith(expect.any(Object), { timeout: 120000 });
   });
