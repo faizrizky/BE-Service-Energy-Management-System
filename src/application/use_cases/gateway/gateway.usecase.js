@@ -4,29 +4,161 @@ const {
   emitGatewayUpdated,
   emitGatewayDeleted,
 } = require("../../../frameworks/webserver/socket-events");
+const { listGateways } = require("../../../frameworks/chirpstack/client");
+const { config } = require("../../../config/config");
+const logger = require("../../../frameworks/helpers/logger");
 
-const ONLINE_THRESHOLD_MULTIPLIER = 2;
-
-/**
- * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
- * (Fungsi yang sama juga ada di room.usecase.js sama report.usecase.js.)
- *
- * Dipake di: computeGatewayStatus (file ini).
- */
-function isDeviceOnline(device, now) {
-  if (!device.lastSeenAt) return false;
-  const thresholdMs =
-    device.intervalMinutes * ONLINE_THRESHOLD_MULTIPLIER * 60 * 1000;
-  return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
-}
+const CS_GATEWAY_STATE_ONLINE = 1;
 
 /**
- * Status gateway: online kalo minimal ada satu device-nya yang online.
+ * Gabungin data gateway EMS sama data ChirpStack: status & lastSeenAt diambil
+ * dari ChirpStack kalo EUI-nya ketemu. Kalo middleware lagi mati, pake nilai
+ * terakhir yang tersimpan di database (hasil sinkron sebelumnya).
  *
  * Dipake di: listGatewaysPaginated, getGatewayById (file ini).
  */
-function computeGatewayStatus(device, now) {
-  return device.some((d) => isDeviceOnline(d, now)) ? "online" : "offline";
+function mergeChirpstackGateway(gateway, csGateways) {
+  if (!csGateways) {
+    return { ...gateway, chirpstack: null };
+  }
+
+  const cs = csGateways.get(String(gateway.eui || "").toLowerCase());
+  if (!cs) {
+    return {
+      ...gateway,
+      status: "offline",
+      chirpstack: { registered: false, name: null, lastSeenAt: null },
+    };
+  }
+
+  return {
+    ...gateway,
+    status: cs.online ? "online" : "offline",
+    lastSeenAt: cs.lastSeenAt,
+    chirpstack: {
+      registered: true,
+      name: cs.name,
+      lastSeenAt: cs.lastSeenAt,
+    },
+  };
+}
+
+/**
+ * Ambil daftar gateway dari ChirpStack lewat middleware, terus rapihin jadi Map
+ * EUI (huruf kecil) → { name, lastSeenAt, online }. Balikin Map kosong kalo
+ * middleware-nya lagi nggak bisa dihubungi, biar halaman tetep kebuka.
+ *
+ * Dipake di: syncGatewaysFromChirpstack (file ini).
+ */
+async function fetchChirpstackGateways() {
+  try {
+    const raw = await listGateways({ limit: 200 });
+    const rows = raw?.data?.result ?? [];
+
+    return new Map(
+      rows.map((row) => [
+        String(row.gatewayId || "").toLowerCase(),
+        {
+          name: row.name ?? null,
+          description: row.description ?? null,
+          lastSeenAt: row.lastSeenAt ? new Date(row.lastSeenAt) : null,
+          online: row.state === CS_GATEWAY_STATE_ONLINE,
+        },
+      ]),
+    );
+  } catch (err) {
+    logger.warn(
+      `[Gateway] Gagal ambil data gateway dari ChirpStack: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Samain gateway EMS sama data ChirpStack: yang udah ada di-update status &
+ * lastSeenAt-nya, yang belum ada di EMS langsung dibikinin (nama & EUI ngikut
+ * ChirpStack). Perubahannya dikabarin lewat socket gateway:created /
+ * gateway:updated.
+ *
+ * Dipake di: gatewaySyncJob.js (tiap menit), app.js → bootstrap.
+ */
+async function syncGatewaysFromChirpstack() {
+  const csGateways = await fetchChirpstackGateways();
+  if (!csGateways || !csGateways.size) {
+    return { checked: 0, updated: 0, created: 0, removed: 0 };
+  }
+
+  const gateways = await prisma.gateway.findMany();
+  const knownEuis = new Set(
+    gateways.map((gateway) => String(gateway.eui || "").toLowerCase()),
+  );
+  let updated = 0;
+  let created = 0;
+
+  for (const gateway of gateways) {
+    const cs = csGateways.get(String(gateway.eui || "").toLowerCase());
+    if (!cs) continue;
+
+    const status = cs.online ? "online" : "offline";
+    const lastSeenChanged =
+      (cs.lastSeenAt?.getTime() ?? null) !==
+      (gateway.lastSeenAt?.getTime() ?? null);
+    if (gateway.status === status && !lastSeenChanged) continue;
+
+    const saved = await prisma.gateway.update({
+      where: { id: gateway.id },
+      data: { status, lastSeenAt: cs.lastSeenAt },
+    });
+    emitGatewayUpdated(saved);
+    updated += 1;
+  }
+
+  for (const [eui, cs] of csGateways) {
+    if (knownEuis.has(eui)) continue;
+
+    const saved = await prisma.gateway.create({
+      data: {
+        eui,
+        name: cs.name || eui,
+        description: cs.description || null,
+        status: cs.online ? "online" : "offline",
+        lastSeenAt: cs.lastSeenAt,
+      },
+    });
+    emitGatewayCreated(saved);
+    created += 1;
+    logger.info(`[Gateway] Gateway baru dari ChirpStack didaftarkan: ${eui}`);
+  }
+
+  let removed = 0;
+  for (const gateway of gateways) {
+    if (csGateways.has(String(gateway.eui || "").toLowerCase())) continue;
+    if (!config.chirpstack.syncDelete) continue;
+
+    const deviceCount = await prisma.device.count({
+      where: { gatewayId: gateway.id },
+    });
+    if (deviceCount > 0) {
+      logger.warn(
+        `[Gateway] "${gateway.name}" (${gateway.eui}) udah nggak ada di ChirpStack tapi masih punya ${deviceCount} device, belum dihapus`,
+      );
+      continue;
+    }
+
+    await prisma.gateway.delete({ where: { id: gateway.id } });
+    emitGatewayDeleted(gateway.id);
+    removed += 1;
+    logger.info(
+      `[Gateway] "${gateway.name}" (${gateway.eui}) dihapus dari EMS karena udah nggak ada di ChirpStack`,
+    );
+  }
+
+  if (updated) {
+    logger.info(
+      `[Gateway] ${updated} gateway disamakan dengan data ChirpStack`,
+    );
+  }
+  return { checked: gateways.length, updated, created, removed };
 }
 
 /**
@@ -83,11 +215,10 @@ async function listGatewaysPaginated({
     }),
   ]);
 
-  const now = new Date();
-  const data = gateways.map(({ devices, ...gateway }) => ({
-    ...gateway,
-    status: computeGatewayStatus(devices, now),
-  }));
+  const csGateways = await fetchChirpstackGateways();
+  const data = gateways.map(({ devices, ...gateway }) =>
+    mergeChirpstackGateway(gateway, csGateways),
+  );
 
   return {
     data,
@@ -114,10 +245,8 @@ async function getGatewayById(id) {
   });
   if (!gateway) return null;
 
-  return {
-    ...gateway,
-    status: computeGatewayStatus(gateway.devices, new Date()),
-  };
+  const csGateways = await fetchChirpstackGateways();
+  return mergeChirpstackGateway(gateway, csGateways);
 }
 
 /**
@@ -197,6 +326,7 @@ async function deleteGateway(id) {
 }
 
 module.exports = {
+  syncGatewaysFromChirpstack,
   listGatewaysPaginated,
   getGatewayById,
   createGateway,

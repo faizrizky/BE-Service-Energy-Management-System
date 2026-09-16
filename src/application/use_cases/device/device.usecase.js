@@ -9,6 +9,7 @@ const {
 const {
   parseRelayResponse,
   parseTelemetryResponse,
+  isDevEui,
   normalizeDevEui,
   sameDevEui,
 } = require("../../../frameworks/chirpstack/contract");
@@ -19,13 +20,16 @@ const {
   pushReportInterval,
 } = require("../../../frameworks/chirpstack/deviceSync");
 const { httpError } = require("../../../frameworks/helpers/httpError");
+const { isDeviceOnline, getOnlineUntil } = require("./device-online.util");
 const logger = require("../../../frameworks/helpers/logger");
+const { config } = require("../../../config/config");
 
 const {
   emitDeviceCreated,
   emitDeviceUpdated,
   emitDeviceDeleted,
   emitDeviceStatus,
+  emitDeviceResync,
   emitDeviceCommand,
 } = require("../../../frameworks/webserver/socket-events");
 const {
@@ -44,9 +48,17 @@ const RELAY_COMMAND_DEADLINE_MS = 30 * 60 * 1000;
 
 const RELAY_RETRY_DELAY_MS = 5000;
 
+const RELAY_OFFLINE_AFTER_ATTEMPTS = 2;
+
 const LOCK_WAIT_POLL_MS = 2000;
 
 const PING_TIMEOUT_MS = 120000;
+
+const RELAY_RESYNC_PING_TIMEOUT_MS = 150000;
+
+const RELAY_RESYNC_RETRY_DELAY_MS = 15000;
+
+const RELAY_RESYNC_MAX_ATTEMPTS = 20;
 
 const DEFAULT_TOPUP_FPORT = 112;
 
@@ -112,7 +124,7 @@ async function withDeviceLock(deviceId, fn) {
 async function getLinkedDevice(deviceId) {
   const device = await prisma.device.findUnique({ where: { id: deviceId } });
   if (!device) throw httpError("Device tidak ditemukan", 404);
-  if (!device.tbDeviceId) {
+  if (!isDevEui(device.eui)) {
     throw httpError(
       "Device belum terhubung ke ChirpStack (devEUI kosong)",
       409,
@@ -149,8 +161,7 @@ async function isRelayAlreadyInState(device, action, excludeCommandId = null) {
 }
 
 const UNIQUE_FIELD_LABEL = {
-  eui: "EUI",
-  tbDeviceId: "devEUI ChirpStack",
+  eui: "devEUI",
 };
 
 /**
@@ -207,7 +218,6 @@ async function listDevicesPaginated({
         { deviceType: { contains: search, mode: "insensitive" } },
         { room: { name: { contains: search, mode: "insensitive" } } },
         { gateway: { name: { contains: search, mode: "insensitive" } } },
-        { tbDeviceId: { contains: search, mode: "insensitive" } },
       ],
     });
   }
@@ -236,20 +246,120 @@ async function listDevicesPaginated({
     }),
   ]);
 
-  const pendingByDevice = await getPendingCommandsByDevice(
-    devices.map((d) => d.id),
-  );
+  const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
+    getPendingCommandsByDevice(devices.map((d) => d.id)),
+    getUncertainStatusDeviceIds(devices),
+    fetchChirpstackDevices(),
+  ]);
+  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   return {
     data: devices.map((d) => ({
       ...d,
       pendingCommand: pendingByDevice.get(d.id) ?? null,
+      statusUncertain: uncertainIds.has(d.id),
+      statusResync: resyncByDevice.get(d.id) ?? null,
+      isOnline: isDeviceOnline(d),
+      onlineUntil: getOnlineUntil(d),
+      chirpstack: toChirpstackInfo(d, csDevices),
     })),
     page,
     rowsPerPage,
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
+}
+
+/**
+ * Ambil daftar device dari ChirpStack (sekali panggil buat satu halaman), terus
+ * rapihin jadi Map devEUI (huruf kecil) → { name, deviceProfileId, lastSeenAt }.
+ * Kalo middleware lagi mati, balikin null (bukan Map kosong) biar nggak salah
+ * ngaku device-nya belom kedaftar.
+ *
+ * Dipake di: listDevicesPaginated, getDeviceById (file ini).
+ */
+async function fetchChirpstackDevices() {
+  try {
+    const raw = await listCsDevices();
+    const rows = raw?.data?.result ?? [];
+
+    return new Map(
+      rows.map((row) => [
+        String(row.devEui || "").toLowerCase(),
+        {
+          name: row.name ?? null,
+          deviceProfileId: row.deviceProfileId ?? null,
+          lastSeenAt: row.lastSeenAt ?? null,
+        },
+      ]),
+    );
+  } catch (err) {
+    logger.warn(
+      `[Device] Gagal ambil data device dari ChirpStack: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Data ChirpStack buat satu device: terdaftar apa nggak, namanya di ChirpStack,
+ * sama kapan terakhir kedengeran di sana.
+ *
+ * Dipake di: listDevicesPaginated, getDeviceById (file ini).
+ */
+function toChirpstackInfo(device, csDevices) {
+  if (!isDevEui(device.eui) || !csDevices) return null;
+
+  const cs = csDevices.get(String(device.eui).toLowerCase());
+  if (!cs) return { registered: false, name: null, lastSeenAt: null };
+
+  return {
+    registered: true,
+    name: cs.name,
+    deviceProfileId: cs.deviceProfileId,
+    lastSeenAt: cs.lastSeenAt,
+  };
+}
+
+/**
+ * Nyari device yang status relainya belom bisa dipercaya: perintah TERAKHIR-nya
+ * batal/gagal PADAHAL downlink udah kekirim, dan sejak itu belom ada telemetry
+ * masuk. Kalo perintah terakhirnya sukses (atau masih pending), berarti udah
+ * nggak ragu lagi. Balikin Set berisi deviceId. Dihitung di server biar
+ * penandanya nggak ilang pas halaman di-reload.
+ *
+ * Dipake di: listDevicesPaginated, getDeviceById (file ini),
+ *   room.usecase.js → getRoomById, listDevicesInRoom.
+ */
+async function getUncertainStatusDeviceIds(devices) {
+  const ids = devices.map((d) => d.id);
+  if (!ids.length) return new Set();
+
+  const lastCommands = await prisma.commandLog.findMany({
+    where: { deviceId: { in: ids } },
+    orderBy: [{ deviceId: "asc" }, { executedAt: "desc" }],
+    distinct: ["deviceId"],
+    select: { deviceId: true, status: true, sentAt: true },
+  });
+
+  const lastSeenById = new Map(devices.map((d) => [d.id, d.lastSeenAt]));
+
+  const uncertainIds = new Set(
+    lastCommands
+      .filter(({ deviceId, status, sentAt }) => {
+        if (status !== "cancelled" && status !== "failed") return false;
+        if (!sentAt) return false;
+        const lastSeenAt = lastSeenById.get(deviceId);
+        return !lastSeenAt || lastSeenAt.getTime() <= sentAt.getTime();
+      })
+      .map((c) => c.deviceId),
+  );
+
+  for (const device of devices) {
+    if (uncertainIds.has(device.id)) requestStatusResync(device);
+  }
+
+  return uncertainIds;
 }
 
 /**
@@ -265,8 +375,20 @@ async function getDeviceById(id) {
   });
   if (!device) return null;
 
-  const pendingByDevice = await getPendingCommandsByDevice([id]);
-  return { ...device, pendingCommand: pendingByDevice.get(id) ?? null };
+  const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
+    getPendingCommandsByDevice([id]),
+    getUncertainStatusDeviceIds([device]),
+    fetchChirpstackDevices(),
+  ]);
+  return {
+    ...device,
+    pendingCommand: pendingByDevice.get(id) ?? null,
+    statusUncertain: uncertainIds.has(id),
+    statusResync: getResyncStateByDevice([id]).get(id) ?? null,
+    isOnline: isDeviceOnline(device),
+    onlineUntil: getOnlineUntil(device),
+    chirpstack: toChirpstackInfo(device, csDevices),
+  };
 }
 
 /**
@@ -277,14 +399,13 @@ async function getDeviceById(id) {
  * Dipake di: device.controller.js → store (POST /api/devices).
  */
 async function createDevice(data) {
-  const devEui = normalizeDevEui(data.tbDeviceId) ?? null;
+  const devEui = normalizeDevEui(data.eui) ?? null;
 
   let device;
   try {
     device = await prisma.device.create({
       data: {
-        eui: data.eui,
-        tbDeviceId: devEui,
+        eui: devEui,
         name: data.name,
         deviceType: data.deviceType,
         intervalMinutes: data.intervalMinutes || 15,
@@ -296,9 +417,9 @@ async function createDevice(data) {
     throw mapPrismaError(err);
   }
 
-  if (device.tbDeviceId) {
+  if (device.eui) {
     try {
-      await ensureCsDeviceRegistered(device.tbDeviceId, {
+      await ensureCsDeviceRegistered(device.eui, {
         name: device.name,
         description: device.deviceType || "",
         updateIfExists: false,
@@ -308,7 +429,7 @@ async function createDevice(data) {
       throw err;
     }
 
-    await pushReportInterval(device.tbDeviceId, device.intervalMinutes);
+    await pushReportInterval(device.eui, device.intervalMinutes);
   }
 
   emitDeviceCreated(device);
@@ -326,9 +447,8 @@ async function updateDevice(id, data) {
   const existing = await prisma.device.findUnique({ where: { id } });
   if (!existing) throw httpError("Device tidak ditemukan", 404);
 
-  const nextDevEui = normalizeDevEui(data.tbDeviceId);
-  const targetDevEui =
-    nextDevEui === undefined ? existing.tbDeviceId : nextDevEui;
+  const nextDevEui = normalizeDevEui(data.eui);
+  const targetDevEui = nextDevEui === undefined ? existing.eui : nextDevEui;
   const nextName = data.name ?? existing.name;
   const nextDeviceType =
     data.deviceType === undefined ? existing.deviceType : data.deviceType;
@@ -340,11 +460,11 @@ async function updateDevice(id, data) {
     });
   }
 
-  const devEuiChanged = !sameDevEui(existing.tbDeviceId, targetDevEui);
+  const devEuiChanged = !sameDevEui(existing.eui, targetDevEui);
 
-  if (existing.tbDeviceId && devEuiChanged) {
+  if (existing.eui && devEuiChanged) {
     logger.info(
-      `[Device] ${id}: devEUI ${existing.tbDeviceId} dilepas dari EMS. ` +
+      `[Device] ${id}: devEUI ${existing.eui} dilepas dari EMS. ` +
         "Device tetap ada di ChirpStack, hapus manual bila memang tidak dipakai.",
     );
   }
@@ -353,7 +473,7 @@ async function updateDevice(id, data) {
     where: { id },
     data: {
       name: data.name,
-      tbDeviceId: nextDevEui,
+      eui: nextDevEui,
       deviceType: data.deviceType,
       intervalMinutes: data.intervalMinutes,
       roomId: data.roomId,
@@ -365,8 +485,8 @@ async function updateDevice(id, data) {
     data.intervalMinutes !== undefined &&
     Number(data.intervalMinutes) !== existing.intervalMinutes;
 
-  if (device.tbDeviceId && (intervalChanged || devEuiChanged)) {
-    await pushReportInterval(device.tbDeviceId, device.intervalMinutes);
+  if (device.eui && (intervalChanged || devEuiChanged)) {
+    await pushReportInterval(device.eui, device.intervalMinutes);
   }
 
   emitDeviceUpdated(device);
@@ -383,15 +503,26 @@ async function updateDevice(id, data) {
 async function deleteDevice(id) {
   const existing = await prisma.device.findUnique({
     where: { id },
-    select: { id: true, tbDeviceId: true, name: true },
+    select: { id: true, eui: true, name: true },
   });
 
   if (!existing) throw httpError("Device tidak ditemukan", 404);
 
-  if (existing.tbDeviceId) {
-    await removeCsDevice(existing.tbDeviceId);
+  if (isDevEui(existing.eui)) {
+    await removeCsDevice(existing.eui);
   }
 
+  return deleteDeviceLocally(id);
+}
+
+/**
+ * Hapus device dari database EMS aja (nggak nyentuh ChirpStack): reading
+ * energinya ikut dihapus, sedangkan riwayat perintah & schedule cuma dilepas
+ * kaitannya biar catatannya nggak ilang.
+ *
+ * Dipake di: deleteDevice, syncDevicesFromChirpstack (file ini).
+ */
+async function deleteDeviceLocally(id) {
   const deleted = await prisma.$transaction(async (tx) => {
     await tx.energyReading.deleteMany({ where: { deviceId: id } });
     await tx.commandLog.updateMany({
@@ -411,6 +542,46 @@ async function deleteDevice(id) {
 }
 
 /**
+ * Samain daftar device EMS sama ChirpStack: device yang devEUI-nya udah nggak
+ * ada di ChirpStack ikut dihapus dari EMS.
+ *
+ * Pengamannya: kalo middleware nggak bisa dihubungi atau daftarnya kosong,
+ * nggak ada yang dihapus (takutnya middleware lagi error). Device yang belom
+ * punya devEUI juga dilewat, soalnya emang cuma ada di EMS.
+ *
+ * Dipake di: chirpstackSyncJob.js (tiap menit).
+ */
+async function syncDevicesFromChirpstack() {
+  const csDevices = await fetchChirpstackDevices();
+  if (!csDevices || !csDevices.size) return { checked: 0, deleted: 0 };
+
+  const devices = await prisma.device.findMany({
+    where: { eui: { not: "" } },
+  });
+  let deleted = 0;
+
+  for (const device of devices) {
+    if (!isDevEui(device.eui)) continue;
+    if (csDevices.has(String(device.eui).toLowerCase())) continue;
+
+    if (!config.chirpstack.syncDelete) {
+      logger.warn(
+        `[Device] "${device.name}" (${device.eui}) udah nggak ada di ChirpStack, tapi penghapusan otomatis dimatiin`,
+      );
+      continue;
+    }
+
+    await deleteDeviceLocally(device.id);
+    deleted += 1;
+    logger.info(
+      `[Device] "${device.name}" (${device.eui}) dihapus dari EMS karena udah nggak ada di ChirpStack`,
+    );
+  }
+
+  return { checked: devices.length, deleted };
+}
+
+/**
  * Nunggu selama ms milidetik.
  *
  * Dipake di: processRelayCommand (jeda antar-retry & nunggu kunci device).
@@ -427,9 +598,39 @@ function commandDeadline(command) {
   return new Date(command.executedAt.getTime() + RELAY_COMMAND_DEADLINE_MS);
 }
 
+const relayAttemptByCommand = new Map();
+
+/**
+ * Simpen progres percobaan downlink satu perintah. state null artinya
+ * perintahnya udah kelar (sukses/gagal/digantikan).
+ *
+ * Dipake di: processRelayCommand (file ini).
+ */
+function setRelayAttempt(commandId, state) {
+  if (state) relayAttemptByCommand.set(commandId, state);
+  else relayAttemptByCommand.delete(commandId);
+}
+
+/**
+ * Bentuk progres percobaan downlink buat frontend. maxAttempts null soalnya
+ * perintah relay dicoba terus sampai batas 30 menit, bukan sekian kali.
+ *
+ * Dipake di: toPendingCommand, toCommandEvent (file ini).
+ */
+function toRelayAttempt(commandId) {
+  const state = relayAttemptByCommand.get(commandId);
+  if (!state) return null;
+
+  return {
+    attempt: state.attempt,
+    maxAttempts: null,
+    nextRetryAt: state.nextRetryAt ? state.nextRetryAt.toISOString() : null,
+  };
+}
+
 /**
  * Bikin data ringkes perintah pending (id, action, notes, requestedAt,
- * deadline) buat response API.
+ * deadline, progres percobaan) buat response API.
  *
  * Dipake di: getPendingCommandsByDevice (file ini).
  */
@@ -440,6 +641,7 @@ function toPendingCommand(command) {
     notes: command.notes,
     requestedAt: command.executedAt,
     deadline: commandDeadline(command),
+    resync: toRelayAttempt(command.id),
   };
 }
 
@@ -447,9 +649,23 @@ function toPendingCommand(command) {
  * Bikin payload event socket device:command, sekalian dipake jadi response API
  * perintah power.
  *
- * Dipake di: requestRelayCommand, cancelRelayCommand, updatePendingCommand
+ * Dipake di: requestRelayCommand, updatePendingCommand
  *   (file ini).
  */
+/**
+ * Status relai dianggep belom pasti kalo perintahnya batal/gagal PADAHAL
+ * downlink-nya udah terlanjur dikirim ke meter. Dipake buat ngasih tau UI
+ * jangan langsung percaya status lama.
+ *
+ * Dipake di: toCommandEvent (file ini).
+ */
+function isStatusUncertain(command) {
+  return (
+    Boolean(command.sentAt) &&
+    (command.status === "cancelled" || command.status === "failed")
+  );
+}
+
 function toCommandEvent(command, deviceName = null) {
   return {
     commandId: command.id,
@@ -461,6 +677,9 @@ function toCommandEvent(command, deviceName = null) {
     notes: command.notes,
     requestedAt: command.executedAt.toISOString(),
     deadline: commandDeadline(command).toISOString(),
+    sentAt: command.sentAt ? command.sentAt.toISOString() : null,
+    statusUncertain: isStatusUncertain(command),
+    resync: toRelayAttempt(command.id),
     timestamp: new Date().toISOString(),
   };
 }
@@ -489,7 +708,7 @@ async function getPendingCommandsByDevice(deviceIds) {
  * sama pembatalan), terus ngirim event device:command. Balikin true kalo ada
  * yang keubah.
  *
- * Dipake di: requestRelayCommand, cancelRelayCommand, completeRelayCommand,
+ * Dipake di: requestRelayCommand, completeRelayCommand,
  *   attemptRelayCommand, processRelayCommand, failRelayCommand (file ini).
  */
 async function updatePendingCommand(command, data, deviceName) {
@@ -508,6 +727,9 @@ async function updatePendingCommand(command, data, deviceName) {
  * CommandLog pending, kirim event, terus masukin ke antrean BullMQ. Device
  * yang belom punya devEUI langsung dicatet gagal.
  *
+ * Perintah dengan aksi yang sama yang masih pending dipake ulang (dari user)
+ * atau dicatet "skipped" (dari scheduler), biar downlink nggak dobel.
+ *
  * Dipake di:
  * - powerDevice (file ini)
  * - room.usecase.js → powerRoom.
@@ -523,7 +745,14 @@ async function requestRelayCommand(device, action, options = {}) {
     scheduleId,
   };
 
-  if (!device.tbDeviceId) {
+  if (!isDeviceOnline(device)) {
+    throw httpError(
+      "Device sedang offline (belum ada laporan dari meter), perintah tidak dikirim",
+      409,
+    );
+  }
+
+  if (!isDevEui(device.eui)) {
     const failed = await prisma.commandLog.create({
       data: {
         ...base,
@@ -538,7 +767,25 @@ async function requestRelayCommand(device, action, options = {}) {
 
   const previous = await prisma.commandLog.findMany({
     where: { deviceId: device.id, status: "pending" },
+    orderBy: { executedAt: "asc" },
   });
+
+  const sameAction = previous.find((command) => command.action === action);
+  if (sameAction) {
+    if (!scheduleId) return toCommandEvent(sameAction, device.name);
+
+    const skipped = await prisma.commandLog.create({
+      data: {
+        ...base,
+        status: "skipped",
+        notes: `Perintah ${action.toUpperCase()} yang sama masih berjalan, downlink nggak dikirim ulang`,
+      },
+    });
+    const skippedEvent = toCommandEvent(skipped, device.name);
+    emitDeviceCommand(skippedEvent);
+    return skippedEvent;
+  }
+
   for (const command of previous) {
     await updatePendingCommand(
       command,
@@ -587,40 +834,147 @@ async function powerDevice(deviceId, action, options = {}) {
   return requestRelayCommand(device, action, options);
 }
 
+const resyncingDevices = new Set();
+
+const resyncStateByDevice = new Map();
+
 /**
- * Batalin semua perintah pending punya device. Lempar 404 kalo device-nya
- * nggak ada atau lagi nggak ada perintah yang jalan.
+ * Bentuk progres resync yang dikirim ke frontend.
  *
- * Dipake di: device.controller.js → cancelPower (POST
- *   /api/devices/:id/power/cancel).
+ * Dipake di: publishResyncState, getResyncStateByDevice (file ini).
  */
-async function cancelRelayCommand(deviceId) {
-  const device = await prisma.device.findUnique({ where: { id: deviceId } });
-  if (!device) throw httpError("Device tidak ditemukan", 404);
-
-  const pending = await prisma.commandLog.findMany({
-    where: { deviceId, status: "pending" },
-  });
-  if (!pending.length) {
-    throw httpError(
-      "Tidak ada perintah yang sedang berjalan untuk device ini",
-      404,
-    );
-  }
-
-  const data = {
-    status: "cancelled",
-    notes:
-      "Dibatalkan pengguna. Kalau perintah sudah terlanjur sampai ke meter, " +
-      "status relai diselaraskan lewat telemetry berikutnya.",
+function toResyncState(state) {
+  return {
+    attempt: state.attempt,
+    maxAttempts: state.maxAttempts,
+    nextRetryAt: state.nextRetryAt ? state.nextRetryAt.toISOString() : null,
   };
-  const events = [];
-  for (const command of pending) {
-    if (await updatePendingCommand(command, data, device.name)) {
-      events.push(toCommandEvent({ ...command, ...data }, device.name));
-    }
+}
+
+/**
+ * Simpen progres resync device terus kabarin lewat socket. state null artinya
+ * pengejaran udah selesai (berhasil atau nyerah).
+ *
+ * Dipake di: runStatusResync, requestStatusResync (file ini).
+ */
+function publishResyncState(device, state) {
+  if (state) resyncStateByDevice.set(device.id, state);
+  else resyncStateByDevice.delete(device.id);
+
+  emitDeviceResync({
+    deviceId: device.id,
+    eui: device.eui,
+    roomId: device.roomId,
+    resync: state ? toResyncState(state) : null,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Ambil progres resync buat sekumpulan device. Hasil: Map deviceId → progres.
+ *
+ * Dipake di: listDevicesPaginated, getDeviceById (file ini),
+ *   room.usecase.js → getRoomById, listDevicesInRoom, listRoomsPaginated,
+ *   listRoomsSummary.
+ */
+function getResyncStateByDevice(deviceIds) {
+  const states = new Map();
+  for (const id of deviceIds) {
+    const state = resyncStateByDevice.get(id);
+    if (state) states.set(id, toResyncState(state));
   }
-  return { deviceId, status: device.status, cancelled: events };
+  return states;
+}
+
+/**
+ * Nguber status relai yang sebenernya: minta telemetry berulang kali sampai
+ * meter beneran ngirim uplink yang bawa relay_state. Cuma hasil uplink asli
+ * yang boleh ngebuka status "belom pasti". Berhenti kalo ada perintah baru yang
+ * pending (perintah itu yang bakal nentuin statusnya).
+ *
+ * Dipake di: requestStatusResync (file ini).
+ */
+async function runStatusResync(device) {
+  for (let attempt = 1; attempt <= RELAY_RESYNC_MAX_ATTEMPTS; attempt += 1) {
+    const pendingCount =
+      (await prisma.commandLog.count({
+        where: { deviceId: device.id, status: "pending" },
+      })) || 0;
+    if (pendingCount > 0) return;
+
+    const fresh = await prisma.device.findUnique({ where: { id: device.id } });
+    if (!fresh) return;
+    if (!isDeviceOnline(fresh)) {
+      logger.warn(
+        `[Relay] Resync status ${device.eui} dihentikan: device offline`,
+      );
+      return;
+    }
+
+    publishResyncState(device, {
+      attempt,
+      maxAttempts: RELAY_RESYNC_MAX_ATTEMPTS,
+      nextRetryAt: null,
+    });
+
+    if (!isDeviceBusy(device.id)) {
+      try {
+        const { telemetry } = await fetchAndStoreTelemetry(device, {
+          timeout: RELAY_RESYNC_PING_TIMEOUT_MS,
+        });
+        if (telemetry && telemetry.relayStatus) {
+          logger.info(
+            `[Relay] Status ${device.eui} disamakan lewat uplink: ${telemetry.relayStatus}`,
+          );
+          return;
+        }
+        logger.warn(
+          `[Relay] Uplink ${device.eui} nggak bawa relay_state, dicoba lagi`,
+        );
+      } catch (err) {
+        logger.warn(
+          `[Relay] Resync status ${device.eui} percobaan ke-${attempt} gagal: ${err.message}`,
+        );
+      }
+    }
+
+    publishResyncState(device, {
+      attempt,
+      maxAttempts: RELAY_RESYNC_MAX_ATTEMPTS,
+      nextRetryAt: new Date(Date.now() + RELAY_RESYNC_RETRY_DELAY_MS),
+    });
+    await sleep(RELAY_RESYNC_RETRY_DELAY_MS);
+  }
+
+  logger.warn(
+    `[Relay] Resync status ${device.eui} nyerah setelah ${RELAY_RESYNC_MAX_ATTEMPTS} percobaan, nunggu poller rutin`,
+  );
+}
+
+/**
+ * Jalanin resync status di latar belakang, satu device satu proses (nggak
+ * dobel walau dipanggil berkali-kali). Sengaja nggak di-await: yang manggil
+ * nggak perlu nungguin meter bangun.
+ *
+ * Dipake di: processRelayCommand, failRelayCommand,
+ *   getUncertainStatusDeviceIds (file ini).
+ */
+function requestStatusResync(device) {
+  if (!device || !isDevEui(device.eui)) return;
+  if (!isDeviceOnline(device)) return;
+  if (resyncingDevices.has(device.id)) return;
+
+  resyncingDevices.add(device.id);
+  runStatusResync(device)
+    .catch((err) => {
+      logger.warn(
+        `[Relay] Resync status ${device.eui} berhenti: ${err.message}`,
+      );
+    })
+    .finally(() => {
+      resyncingDevices.delete(device.id);
+      publishResyncState(device, null);
+    });
 }
 
 /**
@@ -640,6 +994,7 @@ async function completeRelayCommand(command, device, notes) {
     eui: updated.eui,
     roomId: updated.roomId,
     status: updated.status,
+    source: "command",
     timestamp: new Date().toISOString(),
   });
   await updatePendingCommand(
@@ -663,7 +1018,7 @@ async function readRelayStateViaTelemetry(device) {
     return telemetry.relayStatus;
   } catch (err) {
     logger.warn(
-      `[Relay] Verifikasi telemetry ${device.tbDeviceId} gagal: ${err.message}`,
+      `[Relay] Verifikasi telemetry ${device.eui} gagal: ${err.message}`,
     );
     return null;
   }
@@ -712,8 +1067,17 @@ async function attemptRelayCommand(command, device, attempt) {
   let reason;
   let mayHaveReachedMeter = true;
 
+  if (!command.sentAt) {
+    const sentAt = new Date();
+    await prisma.commandLog.updateMany({
+      where: { id: command.id, status: "pending" },
+      data: { sentAt },
+    });
+    command.sentAt = sentAt;
+  }
+
   try {
-    const raw = await setRelay(device.tbDeviceId, command.action === "on", {
+    const raw = await setRelay(device.eui, command.action === "on", {
       wakeTimeout: Math.max(
         10000,
         Math.min(RELAY_WAKE_TIMEOUT_MS, remainingMs),
@@ -746,8 +1110,29 @@ async function attemptRelayCommand(command, device, attempt) {
     }
   }
 
+  const latest = await prisma.device.findUnique({ where: { id: device.id } });
+  const noUplinkSinceCommand =
+    !latest ||
+    !latest.lastSeenAt ||
+    latest.lastSeenAt.getTime() <= command.executedAt.getTime();
+  if (attempt >= RELAY_OFFLINE_AFTER_ATTEMPTS && noUplinkSinceCommand) {
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { commFailedAt: new Date() },
+    });
+    emitDeviceStatus({
+      deviceId: device.id,
+      eui: device.eui,
+      roomId: device.roomId,
+      status: device.status,
+      online: false,
+      source: "command",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   logger.warn(
-    `[Relay] ${device.tbDeviceId} ${command.action.toUpperCase()} percobaan ke-${attempt} gagal: ${reason}`,
+    `[Relay] ${device.eui} ${command.action.toUpperCase()} percobaan ke-${attempt} gagal: ${reason}`,
   );
   await updatePendingCommand(
     command,
@@ -770,6 +1155,20 @@ async function attemptRelayCommand(command, device, attempt) {
 async function processRelayCommand(commandId) {
   let attempt = 0;
 
+  try {
+    await runRelayCommandLoop(commandId, () => (attempt += 1));
+  } finally {
+    setRelayAttempt(commandId, null);
+  }
+}
+
+/**
+ * Isi loop perintah relay: ambil perintah, cek deadline, rebut kunci device,
+ * coba kirim downlink, ulangi sampai berhasil atau kelewat batas waktu.
+ *
+ * Dipake di: processRelayCommand (file ini).
+ */
+async function runRelayCommandLoop(commandId, nextAttempt) {
   for (;;) {
     const command = await prisma.commandLog.findUnique({
       where: { id: commandId },
@@ -779,7 +1178,7 @@ async function processRelayCommand(commandId) {
     const device = command.deviceId
       ? await prisma.device.findUnique({ where: { id: command.deviceId } })
       : null;
-    if (!device || !device.tbDeviceId) {
+    if (!device || !isDevEui(device.eui)) {
       await updatePendingCommand(
         command,
         {
@@ -789,6 +1188,20 @@ async function processRelayCommand(commandId) {
             : "Device sudah dihapus",
         },
         device?.name,
+      );
+      return;
+    }
+
+    if (!isDeviceOnline(device)) {
+      await updatePendingCommand(
+        command,
+        {
+          status: "failed",
+          notes:
+            "Device offline (meter berhenti melapor), perintah dihentikan. " +
+            "Coba lagi setelah meter kembali online.",
+        },
+        device.name,
       );
       return;
     }
@@ -804,6 +1217,7 @@ async function processRelayCommand(commandId) {
         },
         device.name,
       );
+      if (command.sentAt) requestStatusResync(device);
       return;
     }
 
@@ -813,14 +1227,22 @@ async function processRelayCommand(commandId) {
     }
 
     let done;
+    const attempt = nextAttempt();
     try {
-      attempt += 1;
+      setRelayAttempt(commandId, { attempt, nextRetryAt: null });
       done = await attemptRelayCommand(command, device, attempt);
     } finally {
       releaseDeviceLock(device.id);
     }
     if (done) return;
 
+    setRelayAttempt(commandId, {
+      attempt,
+      nextRetryAt: new Date(Date.now() + RELAY_RETRY_DELAY_MS),
+    });
+    emitDeviceCommand(
+      toCommandEvent({ ...command, notes: command.notes }, device.name),
+    );
     await sleep(RELAY_RETRY_DELAY_MS);
   }
 }
@@ -836,10 +1258,17 @@ async function failRelayCommand(commandId, err) {
     where: { id: commandId },
   });
   if (!command) return;
-  await updatePendingCommand(command, {
+  const updated = await updatePendingCommand(command, {
     status: "failed",
     notes: `Proses perintah error: ${err.message}`,
   });
+
+  if (updated && command.sentAt && command.deviceId) {
+    const device = await prisma.device.findUnique({
+      where: { id: command.deviceId },
+    });
+    requestStatusResync(device);
+  }
 }
 
 /**
@@ -880,13 +1309,14 @@ async function fetchAndStoreTelemetry(device, options = {}) {
  * Dipake di: fetchAndStoreTelemetry, readRelayStateViaTelemetry (file ini).
  */
 async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
-  const raw = await pingTelemetry(device.tbDeviceId, { timeout });
+  const raw = await pingTelemetry(device.eui, { timeout });
   const parsed = parseTelemetryResponse(raw);
 
   const updated = await prisma.device.update({
     where: { id: device.id },
     data: {
       lastSeenAt: new Date(),
+      commFailedAt: null,
       ...(parsed.relayStatus && parsed.relayStatus !== device.status
         ? { status: parsed.relayStatus }
         : {}),
@@ -908,8 +1338,10 @@ async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
     eui: device.eui,
     roomId: device.roomId,
     status: updated.status,
+    online: true,
     powerWatt: parsed.powerWatt,
     usageKwh: parsed.usageKwh,
+    source: "telemetry",
     timestamp: new Date().toISOString(),
   });
 
@@ -932,7 +1364,7 @@ async function pingDevice(deviceId, { timeout } = {}) {
 
   return {
     deviceId: updated.id,
-    devEui: updated.tbDeviceId,
+    devEui: updated.eui,
     status: updated.status,
     lastSeenAt: updated.lastSeenAt,
     telemetry,
@@ -956,7 +1388,7 @@ async function setDeviceInterval(deviceId, options = {}) {
   let raw = null;
 
   try {
-    raw = await setReportInterval(device.tbDeviceId, intervalSeconds);
+    raw = await setReportInterval(device.eui, intervalSeconds);
   } catch (err) {
     status = "failed";
     notes = err.message;
@@ -984,7 +1416,7 @@ async function setDeviceInterval(deviceId, options = {}) {
 
   return {
     deviceId: device.id,
-    devEui: device.tbDeviceId,
+    devEui: device.eui,
     intervalMinutes: Number(intervalMinutes),
     intervalSeconds,
     status,
@@ -1030,10 +1462,10 @@ function parseHistoryRange(from, to) {
  */
 async function getDeviceChirpstackMetadata(deviceId) {
   const device = await getLinkedDevice(deviceId);
-  const csDevice = await getCsDevice(device.tbDeviceId);
+  const csDevice = await getCsDevice(device.eui);
   return {
     deviceId: device.id,
-    devEui: device.tbDeviceId,
+    devEui: device.eui,
     attributes: csDevice.data,
   };
 }
@@ -1085,11 +1517,11 @@ async function listChirpstackDeviceCandidates() {
 
   const mappedDevices = devEuis.length
     ? await prisma.device.findMany({
-        where: { tbDeviceId: { in: devEuis } },
-        select: { id: true, name: true, tbDeviceId: true },
+        where: { eui: { in: devEuis } },
+        select: { id: true, name: true, eui: true },
       })
     : [];
-  const mappedByEui = new Map(mappedDevices.map((d) => [d.tbDeviceId, d]));
+  const mappedByEui = new Map(mappedDevices.map((d) => [d.eui, d]));
 
   return {
     data: csResult.data.result.map((d) => ({
@@ -1113,11 +1545,13 @@ module.exports = {
   deleteDevice,
   powerDevice,
   requestRelayCommand,
-  cancelRelayCommand,
   processRelayCommand,
   failRelayCommand,
   recoverPendingRelayCommands,
   getPendingCommandsByDevice,
+  getUncertainStatusDeviceIds,
+  getResyncStateByDevice,
+  syncDevicesFromChirpstack,
   pingDevice,
   setDeviceInterval,
   fetchAndStoreTelemetry,

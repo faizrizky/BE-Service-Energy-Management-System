@@ -20,6 +20,7 @@ const { startRetentionJob } = require("./frameworks/queue/retentionJob");
 const {
   startTelemetryPoller,
 } = require("./frameworks/queue/telemetryPollerJob");
+const { startGatewaySync } = require("./frameworks/queue/gatewaySyncJob");
 const {
   startRelayCommandWorker,
   relayCommandQueue,
@@ -69,6 +70,7 @@ async function bootstrap() {
     await deviceUseCase.recoverPendingRelayCommands();
     startRetentionJob();
     startTelemetryPoller();
+    startGatewaySync();
 
     httpServer.listen(config.app.port, () => {
       logger.info(

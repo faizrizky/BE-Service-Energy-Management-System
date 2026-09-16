@@ -42,11 +42,6 @@ router.post(
   validate(powerActionSchema),
   controller.power,
 );
-router.post(
-  "/:id/power/cancel",
-  checkPermission("device", "power_control"),
-  controller.cancelPower,
-);
 
 router.post(
   "/:id/telemetry",

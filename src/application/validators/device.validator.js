@@ -1,16 +1,12 @@
 const { z } = require("zod");
 
 const createDeviceSchema = z.object({
-  eui: z.string().min(1, "eui wajib diisi").max(100),
-  tbDeviceId: z
+  eui: z
     .string()
     .regex(
       /^[0-9a-fA-F]{16}$/,
-      "tbDeviceId harus devEUI ChirpStack (16 karakter hex)",
-    )
-    .optional()
-    .nullable()
-    .or(z.literal("")),
+      "eui harus devEUI ChirpStack (16 karakter hex)",
+    ),
   name: z.string().min(1, "name wajib diisi").max(120),
   deviceType: z.string().max(50).optional().or(z.literal("")),
   intervalMinutes: z.coerce

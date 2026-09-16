@@ -28,6 +28,7 @@ const config = {
     baseUrl: process.env.CHIRPSTACK_MIDDLEWARE_URL,
     applicationId: process.env.CHIRPSTACK_APPLICATION_ID,
     deviceProfileId: process.env.CHIRPSTACK_DEVICE_PROFILE_ID,
+    syncDelete: process.env.CHIRPSTACK_SYNC_DELETE !== "false",
   },
 
   energyRetention: {
@@ -56,6 +57,10 @@ const config = {
   loginSecurity: {
     maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 5,
     lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10) || 15,
+  },
+  deviceOnline: {
+    graceMs:
+      (parseInt(process.env.DEVICE_ONLINE_GRACE_SECONDS, 10) || 120) * 1000,
   },
   schedule: {
     timezone: process.env.SCHEDULE_TIMEZONE || "Asia/Jakarta",

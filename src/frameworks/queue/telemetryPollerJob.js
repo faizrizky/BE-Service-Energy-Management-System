@@ -32,7 +32,7 @@ async function pollDevice(device) {
     await fetchAndStoreTelemetry(device, { timeout: PING_TIMEOUT_MS });
   } catch (err) {
     logger.warn(
-      `[TelemetryPoller] Gagal poll "${device.name}" (${device.tbDeviceId}): ${err.message}`,
+      `[TelemetryPoller] Gagal poll "${device.name}" (${device.eui}): ${err.message}`,
     );
   }
 }
@@ -56,7 +56,7 @@ async function runTick() {
   try {
     const now = new Date();
     const devices = await prisma.device.findMany({
-      where: { tbDeviceId: { not: null } },
+      where: { eui: { not: "" } },
     });
 
     const due = devices.filter((d) => isDue(d, now) && !isDeviceBusy(d.id));

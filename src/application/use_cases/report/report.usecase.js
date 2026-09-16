@@ -3,6 +3,7 @@ const { config } = require("../../../config/config");
 const {
   getTodayInScheduleZone,
 } = require("../schedule/schedule-time.util");
+const { isDeviceOnline } = require("../device/device-online.util");
 const {
   getHourlyConsumption,
   sumKwh,
@@ -11,8 +12,6 @@ const {
 } = require("./energy-consumption.util");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
-
-const ONLINE_THRESHOLD_MULTIPLIER = 2;
 
 const MAX_EXPORT_RANGE_DAYS = 366;
 
@@ -116,18 +115,6 @@ async function getReportSummary({ roomId, deviceId, from, to }) {
       };
     })
     .sort((a, b) => b.usageKwh - a.usageKwh);
-}
-
-/**
- * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
- *
- * Dipake di: getDashboardSummary (file ini).
- */
-function isDeviceOnline(device, now) {
-  if (!device.lastSeenAt) return false;
-  const thresholdMs =
-    device.intervalMinutes * ONLINE_THRESHOLD_MULTIPLIER * 60 * 1000;
-  return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
 }
 
 /**

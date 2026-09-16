@@ -53,6 +53,17 @@ module.exports = {
   emitDeviceStatus: (payload) => emit("device:status", payload),
 
   /**
+   * Event device:resync buat ngabarin progres pengejaran status relai yang
+   * belom pasti (percobaan ke berapa & kapan dicoba lagi). resync = null
+   * artinya udah kelar.
+   *
+   * Dipake di:
+   * - device.usecase.js → runStatusResync
+   * - Frontend: penanda "Status unconfirmed" di Device, Room detail, Rooms.
+   */
+  emitDeviceResync: (payload) => emit("device:resync", payload),
+
+  /**
    * Event device:command buat progres perintah ON/OFF (pending, success,
    * failed, cancelled).
    *

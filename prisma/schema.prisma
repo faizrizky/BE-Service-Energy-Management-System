@@ -116,7 +116,6 @@ model Room {
 model Device {
   id              String          @id @default(uuid())
   eui             String          @unique
-  tbDeviceId      String?         @unique
   roomId          String
   gatewayId       String
   name            String
@@ -124,6 +123,7 @@ model Device {
   intervalMinutes Int             @default(15)
   status          String          @default("off")
   lastSeenAt      DateTime?
+  commFailedAt    DateTime?
   room            Room            @relation(fields: [roomId], references: [id])
   gateway         Gateway         @relation(fields: [gatewayId], references: [id])
   readings        EnergyReading[]
@@ -178,7 +178,8 @@ model CommandLog {
   triggeredByUserId String? // null kalau triggerType = scheduled
   scheduleId        String? // null kalau triggerType = manual
   executedAt        DateTime  @default(now())
-  status            String // "success" | "failed" | "gateway_offline"
+  sentAt            DateTime? // kapan downlink pertama dikirim ke meter; null = belum dikirim
+  status            String // "pending" | "success" | "failed" | "cancelled" | "skipped"
   notes             String?
   room              Room      @relation(fields: [roomId], references: [id])
   device            Device?   @relation(fields: [deviceId], references: [id])

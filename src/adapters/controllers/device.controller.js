@@ -128,23 +128,6 @@ async function power(req, res, next) {
 }
 
 /**
- * Handler buat batalin perintah ON/OFF device yang masih pending.
- *
- * Dipake di:
- * - device.routes.js → POST /api/devices/:id/power/cancel
- * - Frontend: devicesClientApi.cancelPower (tombol × di switch yang lagi
- *   pending).
- */
-async function cancelPower(req, res, next) {
-  try {
-    const result = await deviceUseCase.cancelRelayCommand(req.params.id);
-    res.json({ data: result });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
  * Handler minta telemetry terbaru langsung dari meter (nungguin uplink), terus
  * disimpen.
  *
@@ -249,7 +232,6 @@ module.exports = {
   update,
   destroy,
   power,
-  cancelPower,
   ping,
   interval,
   chirpstackCandidates,

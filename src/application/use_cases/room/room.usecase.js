@@ -2,8 +2,77 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
 const {
   requestRelayCommand,
   getPendingCommandsByDevice,
+  getUncertainStatusDeviceIds,
+  getResyncStateByDevice,
 } = require("../device/device.usecase");
+
+/**
+ * Progres resync yang paling duluan kelar buat sekumpulan device di satu room.
+ * Yang lagi nungguin uplink (nextRetryAt null) dianggep paling depan.
+ *
+ * Dipake di: listRoomsPaginated, listRoomsSummary (file ini).
+ */
+function pickSoonestResync(states) {
+  const found = states.filter(Boolean);
+  if (!found.length) return null;
+
+  return found.reduce((soonest, state) => {
+    if (!state.nextRetryAt) return state;
+    if (!soonest.nextRetryAt) return soonest;
+    return state.nextRetryAt < soonest.nextRetryAt ? state : soonest;
+  });
+}
+
+/**
+ * Kapan room ini bakal dianggep nggak punya device online lagi: ambil batas
+ * online paling akhir dari device-device-nya. null kalo belom ada yang pernah
+ * ngirim uplink.
+ *
+ * Dipake di: listRoomsPaginated, listRoomsSummary (file ini).
+ */
+function pickRoomOnlineUntil(devices) {
+  const times = devices
+    .map((device) => getOnlineUntil(device))
+    .filter(Boolean)
+    .map((date) => date.getTime());
+  return times.length ? new Date(Math.max(...times)) : null;
+}
+
+/**
+ * Aksi yang lagi dikejar buat satu room: diambil dari perintah pending paling
+ * baru punya device-device di room itu. Dipake biar switch room nunjukin TARGET
+ * perintah (sama kayak switch device), bukan status lama.
+ *
+ * Dipake di: listRoomsPaginated (file ini).
+ */
+function pickRoomPendingAction(devices, pendingByDevice) {
+  const pending = devices
+    .map((device) => pendingByDevice.get(device.id))
+    .filter(Boolean);
+  if (!pending.length) return null;
+
+  const newest = pending.reduce((latest, command) =>
+    command.requestedAt > latest.requestedAt ? command : latest,
+  );
+  return newest.action;
+}
+
+/**
+ * Progres resync status (yang belom pasti) paling duluan buat device di satu
+ * room.
+ *
+ * Dipake di: listRoomsPaginated, listRoomsSummary (file ini).
+ */
+function pickRoomResync(devices, resyncByDevice) {
+  return pickSoonestResync(
+    devices.map((device) => resyncByDevice.get(device.id)),
+  );
+}
 const { httpError } = require("../../../frameworks/helpers/httpError");
+const {
+  isDeviceOnline,
+  getOnlineUntil,
+} = require("../device/device-online.util");
 const {
   getHourlyConsumption,
   sumKwhByDevice,
@@ -73,11 +142,14 @@ async function listRoomsPaginated({
     }),
   ]);
 
-  const deviceIds = rooms.flatMap((room) => room.devices.map((d) => d.id));
-  const [pendingByDevice, usageByDevice] = await Promise.all([
+  const roomDevices = rooms.flatMap((room) => room.devices);
+  const deviceIds = roomDevices.map((d) => d.id);
+  const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
     getPendingCommandsByDevice(deviceIds),
     getUsage24hByDevice(deviceIds),
+    getUncertainStatusDeviceIds(roomDevices),
   ]);
+  const resyncByDevice = getResyncStateByDevice(deviceIds);
 
   const now = new Date();
   const data = await Promise.all(
@@ -93,13 +165,20 @@ async function listRoomsPaginated({
         gatewayId: room.devices[0]?.gatewayId ?? null,
         devicesOnline: onlineDevices.length,
         devicesOffline: room.devices.length - onlineDevices.length,
+        onlineUntil: pickRoomOnlineUntil(room.devices),
         totalUsage24hKwh: Number(
           usagePerDevice.reduce((s, v) => s + v, 0).toFixed(2),
         ),
         isPowerOn: room.devices.some((d) => d.status === "on"),
+        pendingAction: pickRoomPendingAction(room.devices, pendingByDevice),
         pendingCommandCount: room.devices.filter((d) =>
           pendingByDevice.has(d.id),
         ).length,
+        statusUncertain: room.devices.some((d) => uncertainIds.has(d.id)),
+        statusResync: pickRoomResync(room.devices, resyncByDevice),
+        pendingResync: pickSoonestResync(
+          room.devices.map((d) => pendingByDevice.get(d.id)?.resync),
+        ),
         isCritical: room.isCritical,
       };
     }),
@@ -189,7 +268,6 @@ async function getRoomById(
   if (search) {
     andConditions.push({
       OR: [
-        { tbDeviceId: { contains: search, mode: "insensitive" } },
         { eui: { contains: search, mode: "insensitive" } },
         { deviceType: { contains: search, mode: "insensitive" } },
         ...(Number.isInteger(Number(search))
@@ -223,23 +301,28 @@ async function getRoomById(
     computeRoomUsage(id),
   ]);
 
-  const [pendingByDevice, usageByDevice] = await Promise.all([
+  const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
     getPendingCommandsByDevice(devices.map((d) => d.id)),
     getUsage24hByDevice(devices.map((d) => d.id)),
+    getUncertainStatusDeviceIds(devices),
   ]);
+  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => {
       const totalKwh = usageByDevice.get(device.id) || 0;
       return {
         id: device.id,
-        tbDeviceId: device.tbDeviceId || device.eui,
         deviceEui: device.eui,
         deviceType: device.deviceType || "-",
         totalUsage24hKwh: Number(totalKwh.toFixed(2)),
         intervalMinutes: device.intervalMinutes,
         isPowerOn: device.status === "on",
         pendingCommand: pendingByDevice.get(device.id) ?? null,
+        statusUncertain: uncertainIds.has(device.id),
+        statusResync: resyncByDevice.get(device.id) ?? null,
+        isOnline: isDeviceOnline(device),
+        onlineUntil: getOnlineUntil(device),
       };
     }),
   );
@@ -273,7 +356,6 @@ async function listDevicesInRoom(
   if (search) {
     andConditions.push({
       OR: [
-        { tbDeviceId: { contains: search, mode: "insensitive" } },
         { eui: { contains: search, mode: "insensitive" } },
         { deviceType: { contains: search, mode: "insensitive" } },
         ...(Number.isInteger(Number(search))
@@ -317,20 +399,25 @@ async function listDevicesInRoom(
     devices.map((d) => d.id),
   );
 
-  const usageByDevice = await getUsage24hByDevice(devices.map((d) => d.id));
+  const [usageByDevice, uncertainIds] = await Promise.all([
+    getUsage24hByDevice(devices.map((d) => d.id)),
+    getUncertainStatusDeviceIds(devices),
+  ]);
+  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
       id: device.id,
-      tbDeviceId: device.tbDeviceId || device.eui,
       deviceEui: device.eui,
       component: device.deviceType || "-",
-      totalUsage24hKwh: Number(
-        (usageByDevice.get(device.id) || 0).toFixed(2),
-      ),
+      totalUsage24hKwh: Number((usageByDevice.get(device.id) || 0).toFixed(2)),
       intervalMinutes: device.intervalMinutes,
       isPowerOn: device.status === "on",
       pendingCommand: pendingByDevice.get(device.id) ?? null,
+      statusUncertain: uncertainIds.has(device.id),
+      statusResync: resyncByDevice.get(device.id) ?? null,
+      isOnline: isDeviceOnline(device),
+      onlineUntil: getOnlineUntil(device),
     })),
   );
 
@@ -341,20 +428,6 @@ async function listDevicesInRoom(
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
-}
-
-const ONLINE_THRESHOLD_MULTIPLIER = 2;
-
-/**
- * Device dianggep online kalo lastSeenAt-nya belom lewat 2× interval laporan.
- *
- * Dipake di: listRoomsPaginated, listRoomsSummary, getRoomStats (file ini).
- */
-function isDeviceOnline(device, now) {
-  if (!device.lastSeenAt) return false;
-  const thresholdMs =
-    device.intervalMinutes * ONLINE_THRESHOLD_MULTIPLIER * 60 * 1000;
-  return now.getTime() - device.lastSeenAt.getTime() <= thresholdMs;
 }
 
 /**
@@ -389,9 +462,12 @@ async function listRoomsSummary(filter = {}) {
     orderBy: { createdAt: "desc" },
   });
 
-  const usageByDevice = await getUsage24hByDevice(
-    rooms.flatMap((room) => room.devices.map((d) => d.id)),
-  );
+  const roomDevices = rooms.flatMap((room) => room.devices);
+  const [usageByDevice, uncertainIds] = await Promise.all([
+    getUsage24hByDevice(roomDevices.map((d) => d.id)),
+    getUncertainStatusDeviceIds(roomDevices),
+  ]);
+  const resyncByDevice = getResyncStateByDevice(roomDevices.map((d) => d.id));
   const now = new Date();
 
   return Promise.all(
@@ -409,8 +485,11 @@ async function listRoomsSummary(filter = {}) {
         gatewayEui: room.devices[0]?.gateway?.eui ?? null,
         deviceOnlineCount: onlineDevices.length,
         deviceOfflineCount: room.devices.length - onlineDevices.length,
+        onlineUntil: pickRoomOnlineUntil(room.devices),
         totalUsage24hKwh: Number(totalUsage24hKwh.toFixed(2)),
         status: room.devices.some((d) => d.status === "on") ? "on" : "off",
+        statusUncertain: room.devices.some((d) => uncertainIds.has(d.id)),
+        statusResync: pickRoomResync(room.devices, resyncByDevice),
         isCritical: room.isCritical,
       };
     }),
@@ -428,7 +507,7 @@ async function getRoomStats() {
 
   const [totalRooms, gateways, devices] = await Promise.all([
     prisma.room.count(),
-    prisma.gateway.findMany({ select: { id: true } }),
+    prisma.gateway.findMany({ select: { id: true, status: true } }),
     prisma.device.findMany({
       select: {
         id: true,
@@ -444,10 +523,7 @@ async function getRoomStats() {
   );
   const devicesOnline = onlineDeviceIds.size;
 
-  const gatewaysWithOnlineDevice = new Set(
-    devices.filter((d) => onlineDeviceIds.has(d.id)).map((d) => d.gatewayId),
-  );
-  const gatewaysOnline = gatewaysWithOnlineDevice.size;
+  const gatewaysOnline = gateways.filter((g) => g.status === "online").length;
 
   return {
     totalRooms,
