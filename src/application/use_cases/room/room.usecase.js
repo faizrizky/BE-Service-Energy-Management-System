@@ -410,6 +410,7 @@ async function listDevicesInRoom(
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
       id: device.id,
+      name: device.name,
       deviceEui: device.eui,
       component: device.deviceType || "-",
       totalUsage24hKwh: Number((usageByDevice.get(device.id) || 0).toFixed(2)),
