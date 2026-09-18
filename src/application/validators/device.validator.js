@@ -12,7 +12,7 @@ const createDeviceSchema = z.object({
   intervalMinutes: z.coerce
     .number()
     .int()
-    .min(15, "Interval minutes minimal 15")
+    .min(1, "Interval minutes minimal 1")
     .max(1440)
     .optional(),
   roomId: z.string().uuid("Room Id tidak valid"),
@@ -38,7 +38,7 @@ const intervalSchema = z.object({
   intervalMinutes: z.coerce
     .number()
     .int()
-    .min(15, "Interval minutes minimal 15")
+    .min(1, "Interval minutes minimal 1")
     .max(1440, "Interval minutes maksimal 1440"),
 });
 
