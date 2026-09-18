@@ -164,6 +164,7 @@ async function listRoomsPaginated({
         location: room.location,
         gatewayId: room.devices[0]?.gatewayId ?? null,
         gatewayName: room.devices[0]?.gateway?.name ?? null,
+        gatewayEui: room.devices[0]?.gateway?.eui ?? null,
         devicesOnline: onlineDevices.length,
         devicesOffline: room.devices.length - onlineDevices.length,
         onlineUntil: pickRoomOnlineUntil(room.devices),
