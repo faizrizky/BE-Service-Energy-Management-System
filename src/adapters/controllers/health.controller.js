@@ -55,6 +55,8 @@ async function healthCheck(req, res) {
     result.database === "ok" &&
     result.redis === "ok" &&
     result.chirpstack === "ok";
+
+  console.log("GASKUY")
   res.status(allOk ? 200 : 503).json(result);
 }
 
