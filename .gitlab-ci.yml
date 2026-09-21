@@ -224,7 +224,7 @@ deploy:
     - echo "Starting Deployments"
   script: |- 
       sshpass -e ssh -o StrictHostKeyChecking=no "$SSHUSER@$SSHSERVER" "
-        cd $BASE_DIR && $API_DIR &&
+        cd $BASE_DIR && cd $API_DIR &&
         git fetch origin $BRANCH &&
         git reset --hard origin/$BRANCH &&
         $DOCKER_COMMAND &&
