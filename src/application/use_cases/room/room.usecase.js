@@ -2,8 +2,6 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
 const {
   requestRelayCommand,
   getPendingCommandsByDevice,
-  getUncertainStatusDeviceIds,
-  getResyncStateByDevice,
 } = require("../device/device.usecase");
 
 /**
@@ -57,17 +55,6 @@ function pickRoomPendingAction(devices, pendingByDevice) {
   return newest.action;
 }
 
-/**
- * Progres resync status (yang belom pasti) paling duluan buat device di satu
- * room.
- *
- * Dipake di: listRoomsPaginated, listRoomsSummary (file ini).
- */
-function pickRoomResync(devices, resyncByDevice) {
-  return pickSoonestResync(
-    devices.map((device) => resyncByDevice.get(device.id)),
-  );
-}
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
   isDeviceOnline,
@@ -147,9 +134,7 @@ async function listRoomsPaginated({
   const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
     getPendingCommandsByDevice(deviceIds),
     getUsage24hByDevice(deviceIds),
-    getUncertainStatusDeviceIds(roomDevices),
   ]);
-  const resyncByDevice = getResyncStateByDevice(deviceIds);
 
   const now = new Date();
   const data = await Promise.all(
@@ -176,8 +161,6 @@ async function listRoomsPaginated({
         pendingCommandCount: room.devices.filter((d) =>
           pendingByDevice.has(d.id),
         ).length,
-        statusUncertain: room.devices.some((d) => uncertainIds.has(d.id)),
-        statusResync: pickRoomResync(room.devices, resyncByDevice),
         pendingResync: pickSoonestResync(
           room.devices.map((d) => pendingByDevice.get(d.id)?.resync),
         ),
@@ -306,9 +289,7 @@ async function getRoomById(
   const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
     getPendingCommandsByDevice(devices.map((d) => d.id)),
     getUsage24hByDevice(devices.map((d) => d.id)),
-    getUncertainStatusDeviceIds(devices),
   ]);
-  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => {
@@ -321,8 +302,6 @@ async function getRoomById(
         intervalMinutes: device.intervalMinutes,
         isPowerOn: device.status === "on",
         pendingCommand: pendingByDevice.get(device.id) ?? null,
-        statusUncertain: uncertainIds.has(device.id),
-        statusResync: resyncByDevice.get(device.id) ?? null,
         isOnline: isDeviceOnline(device),
         onlineUntil: getOnlineUntil(device),
       };
@@ -403,9 +382,7 @@ async function listDevicesInRoom(
 
   const [usageByDevice, uncertainIds] = await Promise.all([
     getUsage24hByDevice(devices.map((d) => d.id)),
-    getUncertainStatusDeviceIds(devices),
   ]);
-  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
@@ -417,8 +394,6 @@ async function listDevicesInRoom(
       intervalMinutes: device.intervalMinutes,
       isPowerOn: device.status === "on",
       pendingCommand: pendingByDevice.get(device.id) ?? null,
-      statusUncertain: uncertainIds.has(device.id),
-      statusResync: resyncByDevice.get(device.id) ?? null,
       isOnline: isDeviceOnline(device),
       onlineUntil: getOnlineUntil(device),
     })),
@@ -468,9 +443,7 @@ async function listRoomsSummary(filter = {}) {
   const roomDevices = rooms.flatMap((room) => room.devices);
   const [usageByDevice, uncertainIds] = await Promise.all([
     getUsage24hByDevice(roomDevices.map((d) => d.id)),
-    getUncertainStatusDeviceIds(roomDevices),
   ]);
-  const resyncByDevice = getResyncStateByDevice(roomDevices.map((d) => d.id));
   const now = new Date();
 
   return Promise.all(
@@ -491,8 +464,6 @@ async function listRoomsSummary(filter = {}) {
         onlineUntil: pickRoomOnlineUntil(room.devices),
         totalUsage24hKwh: Number(totalUsage24hKwh.toFixed(2)),
         status: room.devices.some((d) => d.status === "on") ? "on" : "off",
-        statusUncertain: room.devices.some((d) => uncertainIds.has(d.id)),
-        statusResync: pickRoomResync(room.devices, resyncByDevice),
         isCritical: room.isCritical,
       };
     }),
