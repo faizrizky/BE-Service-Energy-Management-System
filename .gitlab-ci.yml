@@ -5,9 +5,6 @@ variables:
   TAG_CACHE: "$REPOSITORY/$CI_PROJECT_NAME:buildcache"
   BRANCH: "$CI_COMMIT_REF_NAME"
   BUILDKIT_NO_CLIENT_TOKEN: "1"
-  # TAG_PROD_LATEST: "$REPOSITORY/$CI_PROJECT_NAME:prod-latest"
-  # FLUX_HTTPS_URL: "https://wush:$GIT_TOKEN@git.falahtech.com/wush/staging.git"
-  # PROD_REPO_URL: "https://wush:$GIT_TOKEN@git.falahtech.com/SR/deployment-sisfo-konferensi.git"
 
 stages:
   - init
@@ -77,8 +74,7 @@ stages:
         -H "Content-Type: application/json" \
         -d "$JSON_PAYLOAD"
   rules:
-    # - if: '$CI_COMMIT_BRANCH == "staging"'
-    - if: '$CI_COMMIT_BRANCH == "feat/deployments"'
+    - if: '$CI_COMMIT_BRANCH == "staging"'
   retry: 1
 
 # ==========================================
@@ -167,9 +163,9 @@ build:
     reports:
       dotenv: build.env
   environment:
-    name: feat/deployments
+    name: staging
   only:
-    - feat/deployments
+    - staging
   retry: 1
 
 # ==========================================
@@ -229,7 +225,7 @@ deploy:
         echo 'Deployment of EMS Service staging completed.'
       "
   only:
-    - feat/deployments
+    - staging
 
 # ==========================================
 # NOTIFIKASI DEPLOY STAGING
