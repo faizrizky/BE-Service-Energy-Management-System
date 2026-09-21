@@ -1,0 +1,281 @@
+variables:
+  REPOSITORY: "registry.falahtech.com/2026/ems"
+  TAG_COMMIT: "$REPOSITORY/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA"
+  TAG_LATEST: "$REPOSITORY/$CI_PROJECT_NAME:latest"
+  TAG_CACHE: "$REPOSITORY/$CI_PROJECT_NAME:buildcache"
+  # TAG_PROD_LATEST: "$REPOSITORY/$CI_PROJECT_NAME:prod-latest"
+  FLUX_HTTPS_URL: "https://wush:$GIT_TOKEN@git.falahtech.com/wush/staging.git"
+  # PROD_REPO_URL: "https://wush:$GIT_TOKEN@git.falahtech.com/SR/deployment-sisfo-konferensi.git"
+  BUILDKIT_NO_CLIENT_TOKEN: "1"
+
+stages:
+  - init
+  - build
+  # - deploy
+
+# ==========================================
+# TEMPLATE NOTIFIKASI
+# ==========================================
+.notify_base:
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl jq git coreutils
+  script:
+    - |
+      set -e
+
+      format_duration() {
+        total_seconds="${1:-0}"
+        hours=$((total_seconds / 3600))
+        minutes=$(((total_seconds % 3600) / 60))
+        seconds=$((total_seconds % 60))
+
+        if [ "$hours" -gt 0 ]; then
+          printf "%dh %dm %ds" "$hours" "$minutes" "$seconds"
+        elif [ "$minutes" -gt 0 ]; then
+          printf "%dm %ds" "$minutes" "$seconds"
+        else
+          printf "%ds" "$seconds"
+        fi
+      }
+
+      if [ "$INCLUDE_LATEST_COMMITS" = "true" ]; then
+        LATEST_COMMITS="$(git log -3 --pretty=format:'• %h - %an: %s')"
+        NOTIFY_MESSAGE="$(printf "%b\n\n*Latest 3 Commits:*\n%s" "$NOTIFY_MESSAGE" "$LATEST_COMMITS")"
+      else
+        NOTIFY_MESSAGE="$(printf "%b" "$NOTIFY_MESSAGE")"
+      fi
+
+      if [ "$INCLUDE_BUILD_DURATION" = "true" ] && [ -n "$BUILD_DURATION_SECONDS" ]; then
+        BUILD_DURATION="$(format_duration "$BUILD_DURATION_SECONDS")"
+        NOTIFY_MESSAGE="$(printf "%b\n*Build Duration:* %s" "$NOTIFY_MESSAGE" "$BUILD_DURATION")"
+      fi
+
+      if [ "$INCLUDE_PIPELINE_DURATION" = "true" ] && [ -n "$CI_PIPELINE_CREATED_AT" ]; then
+        PIPELINE_STARTED_AT="$(date -d "$CI_PIPELINE_CREATED_AT" +%s)"
+        PIPELINE_FINISHED_AT="$(date +%s)"
+        PIPELINE_DURATION_SECONDS=$((PIPELINE_FINISHED_AT - PIPELINE_STARTED_AT))
+        PIPELINE_DURATION="$(format_duration "$PIPELINE_DURATION_SECONDS")"
+        NOTIFY_MESSAGE="$(printf "%b\n*Pipeline Duration:* %s" "$NOTIFY_MESSAGE" "$PIPELINE_DURATION")"
+      fi
+
+      JSON_PAYLOAD="$(jq -n \
+        --arg gn "$NOTIFICATION_GROUP" \
+        --arg msg "$NOTIFY_MESSAGE" \
+        '{
+          groupName: $gn,
+          message: $msg,
+          mentionsUsers: []
+        }')"
+
+      echo "Payload yang dikirim:"
+      echo "$JSON_PAYLOAD"
+
+      curl --fail --silent --show-error \
+        -X POST "$NOTIFICATION_API/send" \
+        -H "Content-Type: application/json" \
+        -d "$JSON_PAYLOAD"
+  rules:
+    # - if: '$CI_COMMIT_BRANCH == "staging"'
+    - if: '$CI_COMMIT_BRANCH == "feat/deployments"'
+  retry: 1
+
+# ==========================================
+# NOTIFIKASI PIPELINE DIMULAI
+# ==========================================
+notify_start:
+  stage: init
+  extends: .notify_base
+  variables:
+    INCLUDE_LATEST_COMMITS: "true"
+    NOTIFY_MESSAGE: |-
+      🚀 *PIPELINE STARTED* 🚀
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Staging
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+
+notify_start_prod:
+  stage: init
+  extends: .notify_base
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+  variables:
+    INCLUDE_LATEST_COMMITS: "true"
+    NOTIFY_MESSAGE: |-
+      🚀 *PIPELINE STARTED* 🚀
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Production
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+
+# ==========================================
+# BUILD STAGING
+# ==========================================
+
+build:
+  stage: build
+  tags:
+    - "45"
+  image:
+    name: moby/buildkit:latest
+    entrypoint: [""]
+  before_script:
+    - mkdir -p ~/.docker
+    - |
+      cat > ~/.docker/config.json <<EOF
+      {
+        "auths": {
+          "registry.falahtech.com": {
+            "username": "${DOCKER_USER}",
+            "password": "${DOCKER_PASSWORD}"
+          }
+        }
+      }
+      EOF
+  script:
+    # - printf "%s" "$ENV_STAGING" > .env.staging
+    # - chmod 600 .env.staging
+    - |
+      set -e
+      BUILD_STARTED_AT="$(date +%s)"
+
+      write_build_duration() {
+        status=$?
+        BUILD_FINISHED_AT="$(date +%s)"
+        BUILD_DURATION_SECONDS=$((BUILD_FINISHED_AT - BUILD_STARTED_AT))
+        echo "BUILD_DURATION_SECONDS=${BUILD_DURATION_SECONDS}" > build.env
+        exit "$status"
+      }
+
+      trap write_build_duration EXIT
+
+      echo "Using BuildKit service: $BUILDKIT_SERVICE"
+      buildctl --addr "$BUILDKIT_SERVICE" debug workers
+      buildctl --addr "$BUILDKIT_SERVICE" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt filename=Dockerfile \
+        --output type=image,name=${TAG_COMMIT},push=true,compression=zstd,compression-level=5,force-compression=true,registry.insecure=true \
+        --output type=image,name=${TAG_LATEST},push=true,compression=zstd,compression-level=5,force-compression=true,registry.insecure=true
+  artifacts:
+    when: always
+    reports:
+      dotenv: build.env
+  environment:
+    name: feat/deployments
+  only:
+    - feat/deployments
+  retry: 1
+
+# ==========================================
+# NOTIFIKASI BUILD STAGING
+# ==========================================
+notify_build_success:
+  stage: build
+  extends: .notify_base
+  needs:
+    - job: build
+      artifacts: true
+  when: on_success
+  variables:
+    INCLUDE_BUILD_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      📦 *BUILD & PUSH SUCCESS* 📦
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Commit Hash:* ${CI_COMMIT_SHORT_SHA}
+      *Image:* ${TAG_COMMIT}
+
+notify_build_failure:
+  stage: build
+  extends: .notify_base
+  needs:
+    - job: build
+      artifacts: true
+  when: on_failure
+  variables:
+    INCLUDE_BUILD_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ❌ *BUILD & PUSH FAILED* ❌
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Commit Hash:* ${CI_COMMIT_SHORT_SHA}
+      *Triggered by:* ${GITLAB_USER_NAME}
+
+      *Pipeline URL:* ${CI_PIPELINE_URL}
+
+# ==========================================
+# DEPLOY STAGING
+# ==========================================
+
+# deploy:
+#   stage: deploy
+#   image: alpine:3.17
+#   dependencies:
+#     - build
+#   before_script:
+#     - apk add --no-cache git yq
+#     - git config --global user.email "ci-bot@example.com"
+#     - git config --global user.name "CI Bot"
+#   script: |
+#     git clone "$FLUX_HTTPS_URL" flux-repo
+#     cd flux-repo/releases/dev/project/sisfo-remake/pusbahasa/service/video-conference
+#     git pull
+
+#     sed -E -i "s#registry\.falahtech\.com/.*/${CI_PROJECT_NAME}:[^[:space:]\"']+#${TAG_COMMIT}#g" release.yaml
+
+#     if git diff --quiet; then
+#       echo "No image change, skipping commit"
+#       exit 0
+#     fi
+
+#     git add release.yaml
+#     git commit -m "ci: update ${CI_PROJECT_NAME} image → ${CI_COMMIT_SHORT_SHA}"
+#     git push
+#   only:
+#     - staging
+
+# # ==========================================
+# # NOTIFIKASI DEPLOY STAGING
+# # ==========================================
+# notify_staging_deploy_success:
+#   stage: deploy
+#   extends: .notify_base
+#   needs:
+#     - job: deploy
+#   when: on_success
+#   variables:
+#     INCLUDE_PIPELINE_DURATION: "true"
+#     NOTIFY_MESSAGE: |-
+#       ✅ *DEPLOYMENT SUCCESS* ✅
+
+#       *Project:* ${CI_PROJECT_NAME}
+#       *Environment:* Staging
+#       *Branch:* ${CI_COMMIT_REF_NAME}
+#       *Triggered by:* ${GITLAB_USER_NAME}
+#       *Image:* ${TAG_COMMIT}
+
+#       *Pipeline URL:* ${CI_PIPELINE_URL}
+
+# notify_staging_deploy_failure:
+#   stage: deploy
+#   extends: .notify_base
+#   needs:
+#     - job: deploy
+#   when: on_failure
+#   variables:
+#     INCLUDE_PIPELINE_DURATION: "true"
+#     NOTIFY_MESSAGE: |-
+#       ❌ *DEPLOYMENT FAILED* ❌
+
+#       *Project:* ${CI_PROJECT_NAME}
+#       *Environment:* Staging
+#       *Branch:* ${CI_COMMIT_REF_NAME}
+#       *Triggered by:* ${GITLAB_USER_NAME}
+#       *Image:* ${TAG_COMMIT}
+
+#       *Pipeline URL:* ${CI_PIPELINE_URL}
