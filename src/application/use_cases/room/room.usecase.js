@@ -131,7 +131,7 @@ async function listRoomsPaginated({
 
   const roomDevices = rooms.flatMap((room) => room.devices);
   const deviceIds = roomDevices.map((d) => d.id);
-  const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
+  const [pendingByDevice, usageByDevice] = await Promise.all([
     getPendingCommandsByDevice(deviceIds),
     getUsage24hByDevice(deviceIds),
   ]);
@@ -287,7 +287,7 @@ async function getRoomById(
     computeRoomUsage(id),
   ]);
 
-  const [pendingByDevice, usageByDevice, uncertainIds] = await Promise.all([
+  const [pendingByDevice, usageByDevice] = await Promise.all([
     getPendingCommandsByDevice(devices.map((d) => d.id)),
     getUsage24hByDevice(devices.map((d) => d.id)),
   ]);
@@ -381,9 +381,7 @@ async function listDevicesInRoom(
     devices.map((d) => d.id),
   );
 
-  const [usageByDevice, uncertainIds] = await Promise.all([
-    getUsage24hByDevice(devices.map((d) => d.id)),
-  ]);
+  const usageByDevice = await getUsage24hByDevice(devices.map((d) => d.id));
 
   const deviceRows = await Promise.all(
     devices.map(async (device) => ({
@@ -442,9 +440,9 @@ async function listRoomsSummary(filter = {}) {
   });
 
   const roomDevices = rooms.flatMap((room) => room.devices);
-  const [usageByDevice, uncertainIds] = await Promise.all([
-    getUsage24hByDevice(roomDevices.map((d) => d.id)),
-  ]);
+  const usageByDevice = await getUsage24hByDevice(
+    roomDevices.map((d) => d.id),
+  );
   const now = new Date();
 
   return Promise.all(

@@ -239,7 +239,7 @@ async function listDevicesPaginated({
     }),
   ]);
 
-  const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
+  const [pendingByDevice, csDevices] = await Promise.all([
     getPendingCommandsByDevice(devices.map((d) => d.id)),
     fetchChirpstackDevices(),
   ]);
@@ -323,7 +323,7 @@ async function getDeviceById(id) {
   });
   if (!device) return null;
 
-  const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
+  const [pendingByDevice, csDevices] = await Promise.all([
     getPendingCommandsByDevice([id]),
     fetchChirpstackDevices(),
   ]);
