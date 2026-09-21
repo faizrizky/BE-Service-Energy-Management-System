@@ -234,40 +234,40 @@ deploy:
 # ==========================================
 # NOTIFIKASI DEPLOY STAGING
 # ==========================================
-# notify_staging_deploy_success:
-#   stage: deploy
-#   extends: .notify_base
-#   needs:
-#     - job: deploy
-#   when: on_success
-#   variables:
-#     INCLUDE_PIPELINE_DURATION: "true"
-#     NOTIFY_MESSAGE: |-
-#       ✅ *DEPLOYMENT SUCCESS* ✅
+notify_staging_deploy_success:
+  stage: deploy
+  extends: .notify_base
+  needs:
+    - job: deploy
+  when: on_success
+  variables:
+    INCLUDE_PIPELINE_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ✅ *DEPLOYMENT SUCCESS* ✅
 
-#       *Project:* ${CI_PROJECT_NAME}
-#       *Environment:* Staging
-#       *Branch:* ${CI_COMMIT_REF_NAME}
-#       *Triggered by:* ${GITLAB_USER_NAME}
-#       *Image:* ${TAG_COMMIT}
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Staging
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+      *Image:* ${TAG_COMMIT}
 
-#       *Pipeline URL:* ${CI_PIPELINE_URL}
+      *Pipeline URL:* ${CI_PIPELINE_URL}
 
-# notify_staging_deploy_failure:
-#   stage: deploy
-#   extends: .notify_base
-#   needs:
-#     - job: deploy
-#   when: on_failure
-#   variables:
-#     INCLUDE_PIPELINE_DURATION: "true"
-#     NOTIFY_MESSAGE: |-
-#       ❌ *DEPLOYMENT FAILED* ❌
+notify_staging_deploy_failure:
+  stage: deploy
+  extends: .notify_base
+  needs:
+    - job: deploy
+  when: on_failure
+  variables:
+    INCLUDE_PIPELINE_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ❌ *DEPLOYMENT FAILED* ❌
 
-#       *Project:* ${CI_PROJECT_NAME}
-#       *Environment:* Staging
-#       *Branch:* ${CI_COMMIT_REF_NAME}
-#       *Triggered by:* ${GITLAB_USER_NAME}
-#       *Image:* ${TAG_COMMIT}
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Staging
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+      *Image:* ${TAG_COMMIT}
 
-#       *Pipeline URL:* ${CI_PIPELINE_URL}
+      *Pipeline URL:* ${CI_PIPELINE_URL}
