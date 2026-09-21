@@ -487,6 +487,44 @@ async function deleteDeviceLocally(id) {
 }
 
 /**
+ * Daftarin ke EMS device yang ada di ChirpStack tapi belom ada di database.
+ * Cuma nyatet, nggak ngirim apa-apa ke meter. Device masuk ke room "Belum
+ * Dialokasikan" tanpa gateway; room & gateway-nya diisi nanti lewat menu edit.
+ *
+ * Dipake di: syncDevicesFromChirpstack (file ini).
+ */
+async function createMissingDevicesFromChirpstack(csDevices, knownEuis) {
+  const missing = [...csDevices].filter(
+    ([eui]) => isDevEui(eui) && !knownEuis.has(eui),
+  );
+  if (!missing.length) return 0;
+
+  let created = 0;
+
+  for (const [eui, cs] of missing) {
+    try {
+      const device = await prisma.device.create({
+        data: {
+          eui,
+          name: cs.name || eui,
+        },
+        include: { room: true, gateway: true },
+      });
+      emitDeviceCreated(device);
+      created += 1;
+      logger.info(
+        `[Device] "${device.name}" (${eui}) didaftarkan otomatis oleh sistem`,
+      );
+    } catch (err) {
+      if (err.code === "P2002") continue;
+      logger.warn(`[Device] Gagal didaftarkan ${eui}: ${err.message}`);
+    }
+  }
+
+  return created;
+}
+
+/**
  * Samain daftar device EMS sama ChirpStack: device yang devEUI-nya udah nggak
  * ada di ChirpStack ikut dihapus dari EMS.
  *
@@ -494,16 +532,22 @@ async function deleteDeviceLocally(id) {
  * nggak ada yang dihapus (takutnya middleware lagi error). Device yang belom
  * punya devEUI juga dilewat, soalnya emang cuma ada di EMS.
  *
- * Dipake di: chirpstackSyncJob.js (tiap menit).
+ * Dipake di: gatewaySyncJob.js (tiap menit).
  */
 async function syncDevicesFromChirpstack() {
   const csDevices = await fetchChirpstackDevices();
-  if (!csDevices || !csDevices.size) return { checked: 0, deleted: 0 };
+  if (!csDevices || !csDevices.size)
+    return { checked: 0, deleted: 0, created: 0 };
 
   const devices = await prisma.device.findMany({
     where: { eui: { not: "" } },
   });
+  const knownEuis = new Set(
+    devices.map((d) => String(d.eui).toLocaleLowerCase()),
+  );
+
   let deleted = 0;
+  let created = 0;
 
   for (const device of devices) {
     if (!isDevEui(device.eui)) continue;
@@ -523,7 +567,11 @@ async function syncDevicesFromChirpstack() {
     );
   }
 
-  return { checked: devices.length, deleted };
+  if (config.chirpstack.syncCreate) {
+    created = await createMissingDevicesFromChirpstack(csDevices, knownEuis);
+  }
+
+  return { checked: devices.length, deleted, created };
 }
 
 /**

@@ -140,6 +140,7 @@ async function listRoomsPaginated({
   const data = await Promise.all(
     rooms.map(async (room) => {
       const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
+      const gatewayDevice = room.devices.find((d) => d.gatewayId);
       const usagePerDevice = room.devices.map(
         (d) => usageByDevice.get(d.id) || 0,
       );
@@ -147,9 +148,9 @@ async function listRoomsPaginated({
         id: room.id,
         name: room.name,
         location: room.location,
-        gatewayId: room.devices[0]?.gatewayId ?? null,
-        gatewayName: room.devices[0]?.gateway?.name ?? null,
-        gatewayEui: room.devices[0]?.gateway?.eui ?? null,
+        gatewayId: gatewayDevice?.gatewayId ?? null,
+        gatewayName: gatewayDevice?.gateway?.name ?? null,
+        gatewayEui: gatewayDevice?.gateway?.eui ?? null,
         devicesOnline: onlineDevices.length,
         devicesOffline: room.devices.length - onlineDevices.length,
         onlineUntil: pickRoomOnlineUntil(room.devices),
@@ -449,6 +450,7 @@ async function listRoomsSummary(filter = {}) {
   return Promise.all(
     rooms.map(async (room) => {
       const onlineDevices = room.devices.filter((d) => isDeviceOnline(d, now));
+      const gatewayDevice = room.devices.find((d) => d.gatewayId);
       const usagePerDevice = room.devices.map(
         (d) => usageByDevice.get(d.id) || 0,
       );
@@ -458,7 +460,7 @@ async function listRoomsSummary(filter = {}) {
         id: room.id,
         name: room.name,
         location: room.location,
-        gatewayEui: room.devices[0]?.gateway?.eui ?? null,
+        gatewayEui: gatewayDevice?.gateway?.eui ?? null,
         deviceOnlineCount: onlineDevices.length,
         deviceOfflineCount: room.devices.length - onlineDevices.length,
         onlineUntil: pickRoomOnlineUntil(room.devices),
@@ -687,7 +689,7 @@ async function getDeviceLogs(roomId, deviceId) {
   }
 
   const logs = await prisma.commandLog.findMany({
-    where: { roomId, deviceId },
+    where: { deviceId },
     include: { triggeredBy: { include: { role: true } } },
     orderBy: { executedAt: "desc" },
   });

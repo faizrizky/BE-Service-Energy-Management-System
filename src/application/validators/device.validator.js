@@ -15,11 +15,14 @@ const createDeviceSchema = z.object({
     .min(1, "Interval minutes minimal 1")
     .max(1440)
     .optional(),
-  roomId: z.string().uuid("Room Id tidak valid"),
-  gatewayId: z.string().uuid("Gateway Id tidak valid"),
+  roomId: z.string().uuid("Room Id tidak valid").optional(),
+  gatewayId: z.string().uuid("Gateway Id tidak valid").optional(),
 });
 
-const updateDeviceSchema = createDeviceSchema.partial();
+const updateDeviceSchema = createDeviceSchema.partial().extend({
+  roomId: z.string().uuid("Room Id tidak valid").nullable().optional(),
+  gatewayId: z.string().uuid("Gateway Id tidak valid").nullable().optional(),
+});
 
 const powerActionSchema = z.object({
   action: z.enum(["on", "off"], { message: 'action harus "on" atau "off"' }),

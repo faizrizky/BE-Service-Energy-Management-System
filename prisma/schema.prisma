@@ -116,16 +116,16 @@ model Room {
 model Device {
   id              String          @id @default(uuid())
   eui             String          @unique
-  roomId          String
-  gatewayId       String
+  roomId          String?
+  gatewayId       String?
   name            String
   deviceType      String?
   intervalMinutes Int             @default(15)
   status          String          @default("off")
   lastSeenAt      DateTime?
   commFailedAt    DateTime?
-  room            Room            @relation(fields: [roomId], references: [id])
-  gateway         Gateway         @relation(fields: [gatewayId], references: [id])
+  room            Room?            @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  gateway         Gateway?         @relation(fields: [gatewayId], references: [id], onDelete: Restrict)
   readings        EnergyReading[]
   schedules       Schedule[]
   commandLogs     CommandLog[]
@@ -171,7 +171,7 @@ model Schedule {
 
 model CommandLog {
   id                String    @id @default(uuid())
-  roomId            String
+  roomId            String?
   deviceId          String?
   action            String
   triggerType       String // "manual" | "scheduled"
@@ -181,7 +181,7 @@ model CommandLog {
   sentAt            DateTime? // kapan downlink pertama dikirim ke meter; null = belum dikirim
   status            String // "pending" | "success" | "failed" | "cancelled" | "skipped"
   notes             String?
-  room              Room      @relation(fields: [roomId], references: [id])
+  room              Room?      @relation(fields: [roomId], references: [id], onDelete: Restrict)
   device            Device?   @relation(fields: [deviceId], references: [id])
   triggeredBy       User?     @relation(fields: [triggeredByUserId], references: [id])
   schedule          Schedule? @relation(fields: [scheduleId], references: [id])

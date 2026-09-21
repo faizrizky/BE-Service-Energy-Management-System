@@ -29,6 +29,7 @@ const config = {
     applicationId: process.env.CHIRPSTACK_APPLICATION_ID,
     deviceProfileId: process.env.CHIRPSTACK_DEVICE_PROFILE_ID,
     syncDelete: process.env.CHIRPSTACK_SYNC_DELETE !== "false",
+    syncCreate: process.env.CHIRPSTACK_SYNC_CREATE !== "false",
   },
 
   energyRetention: {
