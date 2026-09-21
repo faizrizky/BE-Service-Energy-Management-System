@@ -225,8 +225,6 @@ deploy:
   script: |- 
       sshpass -e ssh -o StrictHostKeyChecking=no "$SSHUSER@$SSHSERVER" "
         cd $BASE_DIR && cd $API_DIR &&
-        git fetch origin $BRANCH &&
-        git reset --hard origin/$BRANCH &&
         $DOCKER_COMMAND &&
         echo 'Deployment of EMS Service staging completed.'
       "
