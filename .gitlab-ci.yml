@@ -222,8 +222,8 @@ deploy:
   before_script:
     - apk add --no-cache git jq
     - echo "Starting Deployments"
-  script: |
-   - sshpass -e ssh -o StrictHostKeyChecking=no "$SSHUSER@$SSHSERVER" "
+  script: |- 
+      sshpass -e ssh -o StrictHostKeyChecking=no "$SSHUSER@$SSHSERVER" "
         cd $BASE_DIR && $API_DIR &&
         git fetch origin $BRANCH &&
         git reset --hard origin/$BRANCH &&
