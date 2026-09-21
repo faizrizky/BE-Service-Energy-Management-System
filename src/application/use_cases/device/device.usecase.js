@@ -29,7 +29,6 @@ const {
   emitDeviceUpdated,
   emitDeviceDeleted,
   emitDeviceStatus,
-  emitDeviceResync,
   emitDeviceCommand,
 } = require("../../../frameworks/webserver/socket-events");
 const {
@@ -48,17 +47,11 @@ const RELAY_COMMAND_DEADLINE_MS = 30 * 60 * 1000;
 
 const RELAY_RETRY_DELAY_MS = 5000;
 
-const RELAY_OFFLINE_AFTER_ATTEMPTS = 2;
+const RELAY_OFFLINE_AFTER_ATTEMPTS = 1;
 
 const LOCK_WAIT_POLL_MS = 2000;
 
 const PING_TIMEOUT_MS = 120000;
-
-const RELAY_RESYNC_PING_TIMEOUT_MS = 150000;
-
-const RELAY_RESYNC_RETRY_DELAY_MS = 15000;
-
-const RELAY_RESYNC_MAX_ATTEMPTS = 20;
 
 const DEFAULT_TOPUP_FPORT = 112;
 
@@ -248,17 +241,13 @@ async function listDevicesPaginated({
 
   const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
     getPendingCommandsByDevice(devices.map((d) => d.id)),
-    getUncertainStatusDeviceIds(devices),
     fetchChirpstackDevices(),
   ]);
-  const resyncByDevice = getResyncStateByDevice(devices.map((d) => d.id));
 
   return {
     data: devices.map((d) => ({
       ...d,
       pendingCommand: pendingByDevice.get(d.id) ?? null,
-      statusUncertain: uncertainIds.has(d.id),
-      statusResync: resyncByDevice.get(d.id) ?? null,
       isOnline: isDeviceOnline(d),
       onlineUntil: getOnlineUntil(d),
       chirpstack: toChirpstackInfo(d, csDevices),
@@ -322,47 +311,6 @@ function toChirpstackInfo(device, csDevices) {
 }
 
 /**
- * Nyari device yang status relainya belom bisa dipercaya: perintah TERAKHIR-nya
- * batal/gagal PADAHAL downlink udah kekirim, dan sejak itu belom ada telemetry
- * masuk. Kalo perintah terakhirnya sukses (atau masih pending), berarti udah
- * nggak ragu lagi. Balikin Set berisi deviceId. Dihitung di server biar
- * penandanya nggak ilang pas halaman di-reload.
- *
- * Dipake di: listDevicesPaginated, getDeviceById (file ini),
- *   room.usecase.js → getRoomById, listDevicesInRoom.
- */
-async function getUncertainStatusDeviceIds(devices) {
-  const ids = devices.map((d) => d.id);
-  if (!ids.length) return new Set();
-
-  const lastCommands = await prisma.commandLog.findMany({
-    where: { deviceId: { in: ids } },
-    orderBy: [{ deviceId: "asc" }, { executedAt: "desc" }],
-    distinct: ["deviceId"],
-    select: { deviceId: true, status: true, sentAt: true },
-  });
-
-  const lastSeenById = new Map(devices.map((d) => [d.id, d.lastSeenAt]));
-
-  const uncertainIds = new Set(
-    lastCommands
-      .filter(({ deviceId, status, sentAt }) => {
-        if (status !== "cancelled" && status !== "failed") return false;
-        if (!sentAt) return false;
-        const lastSeenAt = lastSeenById.get(deviceId);
-        return !lastSeenAt || lastSeenAt.getTime() <= sentAt.getTime();
-      })
-      .map((c) => c.deviceId),
-  );
-
-  for (const device of devices) {
-    if (uncertainIds.has(device.id)) requestStatusResync(device);
-  }
-
-  return uncertainIds;
-}
-
-/**
  * Detail device plus room, gateway, sama perintah pending-nya. Balikin null
  * kalo nggak ketemu.
  *
@@ -377,14 +325,11 @@ async function getDeviceById(id) {
 
   const [pendingByDevice, uncertainIds, csDevices] = await Promise.all([
     getPendingCommandsByDevice([id]),
-    getUncertainStatusDeviceIds([device]),
     fetchChirpstackDevices(),
   ]);
   return {
     ...device,
     pendingCommand: pendingByDevice.get(id) ?? null,
-    statusUncertain: uncertainIds.has(id),
-    statusResync: getResyncStateByDevice([id]).get(id) ?? null,
     isOnline: isDeviceOnline(device),
     onlineUntil: getOnlineUntil(device),
     chirpstack: toChirpstackInfo(device, csDevices),
@@ -652,20 +597,6 @@ function toPendingCommand(command) {
  * Dipake di: requestRelayCommand, updatePendingCommand
  *   (file ini).
  */
-/**
- * Status relai dianggep belom pasti kalo perintahnya batal/gagal PADAHAL
- * downlink-nya udah terlanjur dikirim ke meter. Dipake buat ngasih tau UI
- * jangan langsung percaya status lama.
- *
- * Dipake di: toCommandEvent (file ini).
- */
-function isStatusUncertain(command) {
-  return (
-    Boolean(command.sentAt) &&
-    (command.status === "cancelled" || command.status === "failed")
-  );
-}
-
 function toCommandEvent(command, deviceName = null) {
   return {
     commandId: command.id,
@@ -677,8 +608,6 @@ function toCommandEvent(command, deviceName = null) {
     notes: command.notes,
     requestedAt: command.executedAt.toISOString(),
     deadline: commandDeadline(command).toISOString(),
-    sentAt: command.sentAt ? command.sentAt.toISOString() : null,
-    statusUncertain: isStatusUncertain(command),
     resync: toRelayAttempt(command.id),
     timestamp: new Date().toISOString(),
   };
@@ -834,149 +763,6 @@ async function powerDevice(deviceId, action, options = {}) {
   return requestRelayCommand(device, action, options);
 }
 
-const resyncingDevices = new Set();
-
-const resyncStateByDevice = new Map();
-
-/**
- * Bentuk progres resync yang dikirim ke frontend.
- *
- * Dipake di: publishResyncState, getResyncStateByDevice (file ini).
- */
-function toResyncState(state) {
-  return {
-    attempt: state.attempt,
-    maxAttempts: state.maxAttempts,
-    nextRetryAt: state.nextRetryAt ? state.nextRetryAt.toISOString() : null,
-  };
-}
-
-/**
- * Simpen progres resync device terus kabarin lewat socket. state null artinya
- * pengejaran udah selesai (berhasil atau nyerah).
- *
- * Dipake di: runStatusResync, requestStatusResync (file ini).
- */
-function publishResyncState(device, state) {
-  if (state) resyncStateByDevice.set(device.id, state);
-  else resyncStateByDevice.delete(device.id);
-
-  emitDeviceResync({
-    deviceId: device.id,
-    eui: device.eui,
-    roomId: device.roomId,
-    resync: state ? toResyncState(state) : null,
-    timestamp: new Date().toISOString(),
-  });
-}
-
-/**
- * Ambil progres resync buat sekumpulan device. Hasil: Map deviceId → progres.
- *
- * Dipake di: listDevicesPaginated, getDeviceById (file ini),
- *   room.usecase.js → getRoomById, listDevicesInRoom, listRoomsPaginated,
- *   listRoomsSummary.
- */
-function getResyncStateByDevice(deviceIds) {
-  const states = new Map();
-  for (const id of deviceIds) {
-    const state = resyncStateByDevice.get(id);
-    if (state) states.set(id, toResyncState(state));
-  }
-  return states;
-}
-
-/**
- * Nguber status relai yang sebenernya: minta telemetry berulang kali sampai
- * meter beneran ngirim uplink yang bawa relay_state. Cuma hasil uplink asli
- * yang boleh ngebuka status "belom pasti". Berhenti kalo ada perintah baru yang
- * pending (perintah itu yang bakal nentuin statusnya).
- *
- * Dipake di: requestStatusResync (file ini).
- */
-async function runStatusResync(device) {
-  for (let attempt = 1; attempt <= RELAY_RESYNC_MAX_ATTEMPTS; attempt += 1) {
-    const pendingCount =
-      (await prisma.commandLog.count({
-        where: { deviceId: device.id, status: "pending" },
-      })) || 0;
-    if (pendingCount > 0) return;
-
-    const fresh = await prisma.device.findUnique({ where: { id: device.id } });
-    if (!fresh) return;
-    if (!isDeviceOnline(fresh)) {
-      logger.warn(
-        `[Relay] Resync status ${device.eui} dihentikan: device offline`,
-      );
-      return;
-    }
-
-    publishResyncState(device, {
-      attempt,
-      maxAttempts: RELAY_RESYNC_MAX_ATTEMPTS,
-      nextRetryAt: null,
-    });
-
-    if (!isDeviceBusy(device.id)) {
-      try {
-        const { telemetry } = await fetchAndStoreTelemetry(device, {
-          timeout: RELAY_RESYNC_PING_TIMEOUT_MS,
-        });
-        if (telemetry && telemetry.relayStatus) {
-          logger.info(
-            `[Relay] Status ${device.eui} disamakan lewat uplink: ${telemetry.relayStatus}`,
-          );
-          return;
-        }
-        logger.warn(
-          `[Relay] Uplink ${device.eui} nggak bawa relay_state, dicoba lagi`,
-        );
-      } catch (err) {
-        logger.warn(
-          `[Relay] Resync status ${device.eui} percobaan ke-${attempt} gagal: ${err.message}`,
-        );
-      }
-    }
-
-    publishResyncState(device, {
-      attempt,
-      maxAttempts: RELAY_RESYNC_MAX_ATTEMPTS,
-      nextRetryAt: new Date(Date.now() + RELAY_RESYNC_RETRY_DELAY_MS),
-    });
-    await sleep(RELAY_RESYNC_RETRY_DELAY_MS);
-  }
-
-  logger.warn(
-    `[Relay] Resync status ${device.eui} nyerah setelah ${RELAY_RESYNC_MAX_ATTEMPTS} percobaan, nunggu poller rutin`,
-  );
-}
-
-/**
- * Jalanin resync status di latar belakang, satu device satu proses (nggak
- * dobel walau dipanggil berkali-kali). Sengaja nggak di-await: yang manggil
- * nggak perlu nungguin meter bangun.
- *
- * Dipake di: processRelayCommand, failRelayCommand,
- *   getUncertainStatusDeviceIds (file ini).
- */
-function requestStatusResync(device) {
-  if (!device || !isDevEui(device.eui)) return;
-  if (!isDeviceOnline(device)) return;
-  if (resyncingDevices.has(device.id)) return;
-
-  resyncingDevices.add(device.id);
-  runStatusResync(device)
-    .catch((err) => {
-      logger.warn(
-        `[Relay] Resync status ${device.eui} berhenti: ${err.message}`,
-      );
-    })
-    .finally(() => {
-      resyncingDevices.delete(device.id);
-      publishResyncState(device, null);
-    });
-}
-
 /**
  * Nandain perintah sukses: update status device, kirim event device:status,
  * terus set CommandLog jadi success. Status device tetep di-update walaupun
@@ -1066,15 +852,6 @@ async function attemptRelayCommand(command, device, attempt) {
   const remainingMs = commandDeadline(command).getTime() - Date.now();
   let reason;
   let mayHaveReachedMeter = true;
-
-  if (!command.sentAt) {
-    const sentAt = new Date();
-    await prisma.commandLog.updateMany({
-      where: { id: command.id, status: "pending" },
-      data: { sentAt },
-    });
-    command.sentAt = sentAt;
-  }
 
   try {
     const raw = await setRelay(device.eui, command.action === "on", {
@@ -1217,7 +994,6 @@ async function runRelayCommandLoop(commandId, nextAttempt) {
         },
         device.name,
       );
-      if (command.sentAt) requestStatusResync(device);
       return;
     }
 
@@ -1258,17 +1034,10 @@ async function failRelayCommand(commandId, err) {
     where: { id: commandId },
   });
   if (!command) return;
-  const updated = await updatePendingCommand(command, {
+  await updatePendingCommand(command, {
     status: "failed",
     notes: `Proses perintah error: ${err.message}`,
   });
-
-  if (updated && command.sentAt && command.deviceId) {
-    const device = await prisma.device.findUnique({
-      where: { id: command.deviceId },
-    });
-    requestStatusResync(device);
-  }
 }
 
 /**
@@ -1549,8 +1318,6 @@ module.exports = {
   failRelayCommand,
   recoverPendingRelayCommands,
   getPendingCommandsByDevice,
-  getUncertainStatusDeviceIds,
-  getResyncStateByDevice,
   syncDevicesFromChirpstack,
   pingDevice,
   setDeviceInterval,
