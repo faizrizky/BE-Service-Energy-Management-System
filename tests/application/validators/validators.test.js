@@ -103,15 +103,17 @@ describe("device.validator", () => {
     fails(createDeviceSchema, { ...valid, eui: "08000000410000e4ff" });
   });
 
-  test("[positive] intervalMinutes di-coerce dari string & batas 15..1440 inklusif", () => {
+  test("[positive] intervalMinutes di-coerce dari string & batas 1..1440 inklusif", () => {
     expect(ok(createDeviceSchema, { ...valid, intervalMinutes: "15" }).intervalMinutes).toBe(15);
+    expect(ok(createDeviceSchema, { ...valid, intervalMinutes: 1 }).intervalMinutes).toBe(1);
     expect(ok(createDeviceSchema, { ...valid, intervalMinutes: 1440 }).intervalMinutes).toBe(1440);
   });
 
   test("[negative] intervalMinutes di luar batas / pecahan", () => {
-    expect(messages(createDeviceSchema, { ...valid, intervalMinutes: 14 })).toEqual([
-      "Interval minutes minimal 15",
+    expect(messages(createDeviceSchema, { ...valid, intervalMinutes: 0 })).toEqual([
+      "Interval minutes minimal 1",
     ]);
+    fails(createDeviceSchema, { ...valid, intervalMinutes: -5 });
     fails(createDeviceSchema, { ...valid, intervalMinutes: 1441 });
     fails(createDeviceSchema, { ...valid, intervalMinutes: 15.5 });
     fails(createDeviceSchema, { ...valid, intervalMinutes: "abc" });
@@ -137,6 +139,40 @@ describe("device.validator", () => {
     fails(updateDeviceSchema, { roomId: "bukan-uuid" });
   });
 
+  // Device hasil sinkron ChirpStack belum punya room & gateway; diisi lewat edit.
+  test("[positive] update boleh ngisi room & gateway saja (buat device yang belum dialokasikan)", () => {
+    expect(ok(updateDeviceSchema, { roomId: UUID, gatewayId: UUID_2 })).toEqual({ roomId: UUID, gatewayId: UUID_2 });
+    expect(ok(updateDeviceSchema, { roomId: UUID })).toEqual({ roomId: UUID });
+    expect(ok(updateDeviceSchema, { gatewayId: UUID_2 })).toEqual({ gatewayId: UUID_2 });
+  });
+
+  test("[positive] create boleh tanpa room & gateway (dialokasikan belakangan)", () => {
+    const { roomId, ...tanpaRoom } = valid;
+    const { gatewayId, ...tanpaGateway } = valid;
+    expect(ok(createDeviceSchema, tanpaRoom)).toEqual(tanpaRoom);
+    expect(ok(createDeviceSchema, tanpaGateway)).toEqual(tanpaGateway);
+    expect(ok(createDeviceSchema, { eui: valid.eui, name: valid.name })).toEqual({ eui: valid.eui, name: valid.name });
+  });
+
+  test("[negative] room & gateway yang dikirim di create tetap harus UUID (null & string kosong ditolak)", () => {
+    fails(createDeviceSchema, { ...valid, roomId: null });
+    fails(createDeviceSchema, { ...valid, gatewayId: null });
+    fails(createDeviceSchema, { ...valid, roomId: "" });
+    fails(createDeviceSchema, { ...valid, gatewayId: "" });
+  });
+
+  // null di update = ngelepas room / gateway dari device.
+  test("[positive] update boleh ngelepas room & gateway dengan null", () => {
+    expect(ok(updateDeviceSchema, { roomId: null, gatewayId: null })).toEqual({ roomId: null, gatewayId: null });
+    expect(ok(updateDeviceSchema, { roomId: null })).toEqual({ roomId: null });
+  });
+
+  test("[negative] update: room & gateway string kosong atau bukan UUID tetap ditolak", () => {
+    fails(updateDeviceSchema, { roomId: "" });
+    fails(updateDeviceSchema, { gatewayId: "" });
+    expect(messages(updateDeviceSchema, { gatewayId: "gw" })).toEqual(["Gateway Id tidak valid"]);
+  });
+
   test("[positive/negative] power action hanya 'on' atau 'off'", () => {
     ok(powerActionSchema, { action: "on" });
     ok(powerActionSchema, { action: "off" });
@@ -156,8 +192,10 @@ describe("device.validator", () => {
     expect(messages(telemetryPingSchema, { timeout: 300001 })).toEqual(["timeout maksimal 300000 ms"]);
   });
 
-  test("[positive/negative] interval wajib diisi, 15..1440", () => {
+  test("[positive/negative] interval wajib diisi, 1..1440", () => {
     expect(ok(intervalSchema, { intervalMinutes: "30" })).toEqual({ intervalMinutes: 30 });
+    expect(ok(intervalSchema, { intervalMinutes: 1 })).toEqual({ intervalMinutes: 1 });
+    expect(messages(intervalSchema, { intervalMinutes: 0 })).toEqual(["Interval minutes minimal 1"]);
     expect(messages(intervalSchema, { intervalMinutes: 1500 })).toEqual(["Interval minutes maksimal 1440"]);
     fails(intervalSchema, {});
   });

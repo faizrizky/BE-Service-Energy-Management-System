@@ -20,6 +20,7 @@ const ENV_KEYS = [
   "CHIRPSTACK_APPLICATION_ID",
   "SCHEDULE_TIMEZONE",
   "CHIRPSTACK_SYNC_DELETE",
+  "CHIRPSTACK_SYNC_CREATE",
   "DEVICE_ONLINE_GRACE_SECONDS",
 ];
 
@@ -80,6 +81,7 @@ describe("config defaults & parsing", () => {
     expect(config.schedule.timezone).toBe("Asia/Jakarta");
     expect(config.deviceOnline.graceMs).toBe(120000);
     expect(config.chirpstack.syncDelete).toBe(true);
+    expect(config.chirpstack.syncCreate).toBe(true);
   });
 
   test("[positive] nilai env valid di-parse ke tipe yang benar", () => {
@@ -124,6 +126,21 @@ describe("validateConfig", () => {
 
   test('[negative] CHIRPSTACK_SYNC_DELETE="false" -> penghapusan otomatis dimatikan', () => {
     expect(loadConfig({ CHIRPSTACK_SYNC_DELETE: "false" }).config.chirpstack.syncDelete).toBe(false);
+  });
+
+  test('[negative] CHIRPSTACK_SYNC_CREATE="false" -> pendaftaran otomatis device dari ChirpStack dimatikan', () => {
+    expect(loadConfig({ CHIRPSTACK_SYNC_CREATE: "false" }).config.chirpstack.syncCreate).toBe(false);
+  });
+
+  test('[positive] CHIRPSTACK_SYNC_CREATE selain "false" (misal "true" atau kosong) tetap aktif', () => {
+    expect(loadConfig({ CHIRPSTACK_SYNC_CREATE: "true" }).config.chirpstack.syncCreate).toBe(true);
+    expect(loadConfig({ CHIRPSTACK_SYNC_CREATE: undefined }).config.chirpstack.syncCreate).toBe(true);
+  });
+
+  test("[positive] sinkron create & delete bisa diatur terpisah", () => {
+    const { config } = loadConfig({ CHIRPSTACK_SYNC_CREATE: "false", CHIRPSTACK_SYNC_DELETE: "true" });
+    expect(config.chirpstack.syncCreate).toBe(false);
+    expect(config.chirpstack.syncDelete).toBe(true);
   });
 
   test("[positive] DEVICE_ONLINE_GRACE_SECONDS dipakai buat jendela online", () => {

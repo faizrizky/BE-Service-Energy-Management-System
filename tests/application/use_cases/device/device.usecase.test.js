@@ -20,7 +20,6 @@ jest.mock("../../../../src/frameworks/webserver/socket-events", () => ({
   emitDeviceUpdated: jest.fn(),
   emitDeviceDeleted: jest.fn(),
   emitDeviceStatus: jest.fn(),
-  emitDeviceResync: jest.fn(),
   emitDeviceCommand: jest.fn(),
 }));
 
@@ -33,6 +32,7 @@ const { enqueueRelayCommand } = require("../../../../src/frameworks/queue/relayC
 const events = require("../../../../src/frameworks/webserver/socket-events");
 const logger = require("../../../../src/frameworks/helpers/logger");
 const uc = require("../../../../src/application/use_cases/device/device.usecase");
+const { config } = require("../../../../src/config/config");
 const { resetPrismaMock } = require("../../../helpers/prisma");
 
 const DEV_EUI = "08000000410000e4";
@@ -173,85 +173,32 @@ describe("listDevicesPaginated & getDeviceById", () => {
     expect(prisma.commandLog.findMany).not.toHaveBeenCalled();
   });
 
+  // Device hasil sinkron ChirpStack belum punya room & gateway, dan belum pernah kirim uplink.
+  test("[positive] device tanpa room & gateway tampil apa adanya & dianggap offline sampai uplink pertama", async () => {
+    prisma.device.count.mockResolvedValue(1);
+    prisma.device.findMany.mockResolvedValue([
+      device({ id: "d1", roomId: null, gatewayId: null, room: null, gateway: null, lastSeenAt: null }),
+    ]);
+    prisma.commandLog.findMany.mockResolvedValue([]);
+
+    const { data } = await uc.listDevicesPaginated();
+
+    expect(data[0]).toMatchObject({
+      roomId: null,
+      gatewayId: null,
+      room: null,
+      gateway: null,
+      isOnline: false,
+      onlineUntil: null,
+      pendingCommand: null,
+    });
+  });
+
   test("[positive/negative] getDeviceById dengan pendingCommand & tidak ditemukan", async () => {
     prisma.device.findUnique.mockResolvedValueOnce(device()).mockResolvedValueOnce(null);
     prisma.commandLog.findMany.mockResolvedValue([]);
     await expect(uc.getDeviceById("d1")).resolves.toMatchObject({ id: "d1", pendingCommand: null });
     await expect(uc.getDeviceById("x")).resolves.toBeNull();
-  });
-});
-
-describe("getUncertainStatusDeviceIds", () => {
-  const minutesAgo = (m) => new Date(Date.now() - m * 60000);
-
-  // Dihitung di server supaya penanda "status belum pasti" nggak hilang saat halaman di-reload.
-  test("[positive] perintah terakhir batal setelah downlink terkirim & belum ada uplink -> ditandai", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "cancelled", sentAt: minutesAgo(5) },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ id: "d1", lastSeenAt: minutesAgo(20) }),
-    ]);
-    expect([...result]).toEqual(["d1"]);
-
-    const { where, distinct } = prisma.commandLog.findMany.mock.calls[0][0];
-    expect(where).toEqual({ deviceId: { in: ["d1"] } });
-    expect(distinct).toEqual(["deviceId"]);
-  });
-
-  test("[negative] sudah ada uplink setelah downlink terkirim -> status sudah pasti", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "failed", sentAt: minutesAgo(20) },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ id: "d1", lastSeenAt: minutesAgo(1) }),
-    ]);
-    expect(result.size).toBe(0);
-  });
-
-  test("[positive] device belum pernah kirim uplink -> ikut ditandai", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "cancelled", sentAt: minutesAgo(5) },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ id: "d1", lastSeenAt: null }),
-    ]);
-    expect([...result]).toEqual(["d1"]);
-  });
-
-  // Perintah berikutnya yang berhasil = bukti relai sudah di posisi yang benar.
-  test("[negative] perintah terakhir sukses -> keraguan hilang walau sebelumnya ada yang gagal", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "success", sentAt: minutesAgo(2) },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ id: "d1", lastSeenAt: minutesAgo(30) }),
-    ]);
-    expect(result.size).toBe(0);
-  });
-
-  test("[negative] perintah terakhir masih pending -> belum ditandai (UI pakai tampilan pending)", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "pending", sentAt: minutesAgo(1) },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ id: "d1", lastSeenAt: minutesAgo(30) }),
-    ]);
-    expect(result.size).toBe(0);
-  });
-
-  test("[negative] data lama tanpa sentAt -> diabaikan", async () => {
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "cancelled", sentAt: null },
-    ]);
-    const result = await uc.getUncertainStatusDeviceIds([device({ lastSeenAt: null })]);
-    expect(result.size).toBe(0);
-  });
-
-  test("[negative] daftar device kosong -> tanpa query", async () => {
-    const result = await uc.getUncertainStatusDeviceIds([]);
-    expect(result.size).toBe(0);
-    expect(prisma.commandLog.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -323,54 +270,204 @@ describe("data ChirpStack di daftar device", () => {
 });
 
 describe("syncDevicesFromChirpstack", () => {
-  const csRow = (devEui = DEV_EUI) => ({ devEui, name: "KwH Meter Master", lastSeenAt: null });
+  const csRow = (devEui = DEV_EUI, name = "KwH Meter Master") => ({ devEui, name, lastSeenAt: null });
+  const csResult = (...rows) => ({ data: { result: rows } });
 
-  test("[positive] device yang udah dihapus di ChirpStack ikut dihapus di EMS", async () => {
-    prisma.device.findMany.mockResolvedValue([device({ id: "d1", eui: "aaaaaaaaaaaaaaaa" })]);
-    cs.listCsDevices.mockResolvedValue({ data: { result: [csRow()] } });
-    prisma.device.delete.mockResolvedValue({ id: "d1" });
-
-    const result = await uc.syncDevicesFromChirpstack();
-
-    expect(prisma.energyReading.deleteMany).toHaveBeenCalledWith({ where: { deviceId: "d1" } });
-    expect(prisma.device.delete).toHaveBeenCalledWith({ where: { id: "d1" } });
-    expect(events.emitDeviceDeleted).toHaveBeenCalledWith("d1");
-    expect(result).toEqual({ checked: 1, deleted: 1 });
+  beforeEach(() => {
+    config.chirpstack.syncCreate = true;
+    config.chirpstack.syncDelete = true;
+    prisma.device.create.mockImplementation(async ({ data }) => ({ id: `new-${data.eui}`, ...data, room: null, gateway: null }));
   });
 
-  test("[negative] device yang masih ada di ChirpStack aman (EUI beda huruf besar/kecil tetap cocok)", async () => {
-    prisma.device.findMany.mockResolvedValue([device({ id: "d1" })]);
-    cs.listCsDevices.mockResolvedValue({ data: { result: [csRow(DEV_EUI.toUpperCase())] } });
-
-    const result = await uc.syncDevicesFromChirpstack();
-
-    expect(prisma.device.delete).not.toHaveBeenCalled();
-    expect(result).toEqual({ checked: 1, deleted: 0 });
+  afterEach(() => {
+    config.chirpstack.syncCreate = true;
+    config.chirpstack.syncDelete = true;
   });
 
-  // Pengaman: middleware error jangan sampai ngehapus semua device.
-  test("[negative] middleware mati -> nggak ada yang dihapus", async () => {
-    cs.listCsDevices.mockRejectedValue(new Error("ECONNREFUSED"));
-    const result = await uc.syncDevicesFromChirpstack();
-    expect(prisma.device.findMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ checked: 0, deleted: 0 });
+  describe("hapus device yang udah nggak ada di ChirpStack", () => {
+    test("[positive] device yang udah dihapus di ChirpStack ikut dihapus di EMS", async () => {
+      prisma.device.findMany.mockResolvedValue([
+        device({ id: "d1", eui: "aaaaaaaaaaaaaaaa" }),
+        device({ id: "d2" }),
+      ]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+      prisma.device.delete.mockResolvedValue({ id: "d1" });
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.energyReading.deleteMany).toHaveBeenCalledWith({ where: { deviceId: "d1" } });
+      expect(prisma.device.delete).toHaveBeenCalledWith({ where: { id: "d1" } });
+      expect(events.emitDeviceDeleted).toHaveBeenCalledWith("d1");
+      expect(result).toEqual({ checked: 2, deleted: 1, created: 0 });
+    });
+
+    test("[negative] device yang masih ada di ChirpStack aman (EUI beda huruf besar/kecil tetap cocok)", async () => {
+      prisma.device.findMany.mockResolvedValue([device({ id: "d1" })]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow(DEV_EUI.toUpperCase())));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.delete).not.toHaveBeenCalled();
+      expect(prisma.device.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ checked: 1, deleted: 0, created: 0 });
+    });
+
+    // Pengaman: middleware error jangan sampai ngehapus semua device.
+    test("[negative] middleware mati -> nggak ada yang dihapus atau dibuat", async () => {
+      cs.listCsDevices.mockRejectedValue(new Error("ECONNREFUSED"));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.findMany).not.toHaveBeenCalled();
+      expect(result).toEqual({ checked: 0, deleted: 0, created: 0 });
+    });
+
+    test("[negative] daftar ChirpStack kosong -> dianggap nggak wajar, nggak ada yang dihapus", async () => {
+      cs.listCsDevices.mockResolvedValue(csResult());
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.delete).not.toHaveBeenCalled();
+      expect(result).toEqual({ checked: 0, deleted: 0, created: 0 });
+    });
+
+    test("[negative] device yang EUI-nya bukan devEUI (cuma ada di EMS) dilewat", async () => {
+      prisma.device.findMany.mockResolvedValue([device({ id: "d9", eui: "dev-002" }), device({ id: "d1" })]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.findMany).toHaveBeenCalledWith({ where: { eui: { not: "" } } });
+      expect(prisma.device.delete).not.toHaveBeenCalled();
+      expect(result.deleted).toBe(0);
+    });
+
+    test("[negative] CHIRPSTACK_SYNC_DELETE=false -> device hilang cuma dicatat di log", async () => {
+      config.chirpstack.syncDelete = false;
+      config.chirpstack.syncCreate = false;
+      prisma.device.findMany.mockResolvedValue([device({ id: "d1", eui: "aaaaaaaaaaaaaaaa" })]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.delete).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("penghapusan otomatis dimatiin"));
+      expect(result).toEqual({ checked: 1, deleted: 0, created: 0 });
+    });
   });
 
-  test("[negative] daftar ChirpStack kosong -> dianggap nggak wajar, nggak ada yang dihapus", async () => {
-    cs.listCsDevices.mockResolvedValue({ data: { result: [] } });
-    const result = await uc.syncDevicesFromChirpstack();
-    expect(prisma.device.delete).not.toHaveBeenCalled();
-    expect(result).toEqual({ checked: 0, deleted: 0 });
-  });
+  describe("daftarin device baru dari ChirpStack", () => {
+    // Room & gateway sengaja dikosongin, diisi nanti lewat menu edit device.
+    test("[positive] device baru didaftarkan cuma dengan eui (huruf kecil) & nama dari ChirpStack, tanpa room & gateway", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow("08000000410000E4")));
 
-  test("[negative] device tanpa devEUI dilewat (cuma ada di EMS)", async () => {
-    prisma.device.findMany.mockResolvedValue([]);
-    cs.listCsDevices.mockResolvedValue({ data: { result: [csRow()] } });
+      const result = await uc.syncDevicesFromChirpstack();
 
-    await uc.syncDevicesFromChirpstack();
+      expect(prisma.device.create).toHaveBeenCalledTimes(1);
+      expect(prisma.device.create).toHaveBeenCalledWith({
+        data: { eui: DEV_EUI, name: "KwH Meter Master" },
+        include: { room: true, gateway: true },
+      });
+      expect(prisma.device.create.mock.calls[0][0].data).not.toHaveProperty("roomId");
+      expect(prisma.device.create.mock.calls[0][0].data).not.toHaveProperty("gatewayId");
+      expect(events.emitDeviceCreated).toHaveBeenCalledWith(expect.objectContaining({ eui: DEV_EUI, room: null, gateway: null }));
+      expect(result).toEqual({ checked: 0, deleted: 0, created: 1 });
+    });
 
-    expect(prisma.device.findMany).toHaveBeenCalledWith({ where: { eui: { not: "" } } });
-    expect(prisma.device.delete).not.toHaveBeenCalled();
+    test("[positive] nama kosong di ChirpStack -> pakai devEUI sebagai nama", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow(DEV_EUI, null)));
+
+      await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.create.mock.calls[0][0].data).toEqual({ eui: DEV_EUI, name: DEV_EUI });
+    });
+
+    test("[positive] beberapa device baru sekaligus -> semuanya didaftarkan & dikabarin lewat socket", async () => {
+      prisma.device.findMany.mockResolvedValue([device({ id: "d1" })]);
+      cs.listCsDevices.mockResolvedValue(
+        csResult(csRow(DEV_EUI), csRow("0800000041000001", "Meter A"), csRow("0800000041000002", "Meter B")),
+      );
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.create.mock.calls.map((c) => c[0].data.eui)).toEqual(["0800000041000001", "0800000041000002"]);
+      expect(events.emitDeviceCreated).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ checked: 1, deleted: 0, created: 2 });
+    });
+
+    // Sinkron cuma nyatet; nggak boleh ngirim apa pun ke ChirpStack atau ke meter.
+    test("[positive] mendaftarkan device nggak nyentuh ChirpStack maupun meter", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+
+      await uc.syncDevicesFromChirpstack();
+
+      expect(sync.ensureCsDeviceRegistered).not.toHaveBeenCalled();
+      expect(sync.pushReportInterval).not.toHaveBeenCalled();
+      expect(cs.setRelay).not.toHaveBeenCalled();
+      expect(cs.pingTelemetry).not.toHaveBeenCalled();
+    });
+
+    test("[negative] CHIRPSTACK_SYNC_CREATE=false -> nggak ada device yang dibuat", async () => {
+      config.chirpstack.syncCreate = false;
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ checked: 0, deleted: 0, created: 0 });
+    });
+
+    test("[negative] devEUI dari ChirpStack bukan 16 hex -> dilewat", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow("dev-002"), csRow("0800000041")));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(prisma.device.create).not.toHaveBeenCalled();
+      expect(result.created).toBe(0);
+    });
+
+    // Keburu dibikin lewat form di waktu yang sama -> unique constraint, aman dilewat.
+    test("[negative] device keburu dibikin di tempat lain (P2002) -> dilewat tanpa warning, yang lain lanjut", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow("0800000041000001"), csRow("0800000041000002")));
+      prisma.device.create
+        .mockRejectedValueOnce(Object.assign(new Error("Unique"), { code: "P2002" }))
+        .mockImplementationOnce(async ({ data }) => ({ id: "new-2", ...data }));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(result.created).toBe(1);
+      expect(events.emitDeviceCreated).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    test("[negative] error lain saat membuat satu device -> dicatat sebagai warning & device berikutnya tetap diproses", async () => {
+      prisma.device.findMany.mockResolvedValue([]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow("0800000041000001"), csRow("0800000041000002")));
+      prisma.device.create
+        .mockRejectedValueOnce(new Error("db down"))
+        .mockImplementationOnce(async ({ data }) => ({ id: "new-2", ...data }));
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Gagal didaftarkan 0800000041000001: db down"));
+      expect(result.created).toBe(1);
+    });
+
+    test("[positive] tambah & hapus dalam satu putaran sinkron", async () => {
+      prisma.device.findMany.mockResolvedValue([device({ id: "d1", eui: "aaaaaaaaaaaaaaaa" })]);
+      cs.listCsDevices.mockResolvedValue(csResult(csRow()));
+      prisma.device.delete.mockResolvedValue({ id: "d1" });
+
+      const result = await uc.syncDevicesFromChirpstack();
+
+      expect(result).toEqual({ checked: 1, deleted: 1, created: 1 });
+    });
   });
 });
 
@@ -382,6 +479,19 @@ describe("createDevice", () => {
     prisma.device.create.mockResolvedValue(device({ intervalMinutes: 15 }));
     await uc.createDevice(input);
     expect(prisma.device.create.mock.calls[0][0].data).toMatchObject({ eui: DEV_EUI, intervalMinutes: 15 });
+    expect(sync.ensureCsDeviceRegistered).toHaveBeenCalled();
+    expect(events.emitDeviceCreated).toHaveBeenCalled();
+  });
+
+  test("[positive] device tanpa room & gateway tetap bisa dibuat (dialokasikan belakangan)", async () => {
+    prisma.device.create.mockResolvedValue(device({ roomId: null, gatewayId: null }));
+
+    await uc.createDevice({ eui: DEV_EUI, name: "Meter" });
+
+    const { data } = prisma.device.create.mock.calls[0][0];
+    expect(data).toMatchObject({ eui: DEV_EUI, name: "Meter" });
+    expect(data.roomId).toBeUndefined();
+    expect(data.gatewayId).toBeUndefined();
     expect(sync.ensureCsDeviceRegistered).toHaveBeenCalled();
     expect(events.emitDeviceCreated).toHaveBeenCalled();
   });
@@ -437,6 +547,49 @@ describe("updateDevice", () => {
     expect(prisma.device.update.mock.calls[0][0].data.eui).toBeUndefined();
     expect(sync.pushReportInterval).not.toHaveBeenCalled();
     expect(events.emitDeviceUpdated).toHaveBeenCalled();
+  });
+
+  // Device hasil sinkron ChirpStack belum punya room & gateway; diisi lewat edit.
+  test("[positive] room & gateway diisi belakangan untuk device yang belum dialokasikan", async () => {
+    prisma.device.findUnique.mockResolvedValue(device({ roomId: null, gatewayId: null }));
+    prisma.device.update.mockResolvedValue(device({ roomId: "r9", gatewayId: "g9" }));
+
+    await uc.updateDevice("d1", { roomId: "r9", gatewayId: "g9" });
+
+    expect(prisma.device.update.mock.calls[0][0].data).toMatchObject({ roomId: "r9", gatewayId: "g9" });
+    expect(sync.pushReportInterval).not.toHaveBeenCalled();
+    expect(events.emitDeviceUpdated).toHaveBeenCalled();
+  });
+
+  test("[positive] room & gateway dilepas dengan null", async () => {
+    prisma.device.findUnique.mockResolvedValue(device());
+    prisma.device.update.mockResolvedValue(device({ roomId: null, gatewayId: null }));
+
+    await uc.updateDevice("d1", { roomId: null, gatewayId: null });
+
+    expect(prisma.device.update.mock.calls[0][0].data).toMatchObject({ roomId: null, gatewayId: null });
+  });
+
+  test("[negative] room & gateway nggak dikirim -> nilai lama nggak diubah", async () => {
+    prisma.device.findUnique.mockResolvedValue(device());
+    prisma.device.update.mockResolvedValue(device({ name: "Baru" }));
+
+    await uc.updateDevice("d1", { name: "Baru" });
+
+    const { data } = prisma.device.update.mock.calls[0][0];
+    expect(data.roomId).toBeUndefined();
+    expect(data.gatewayId).toBeUndefined();
+  });
+
+  // Edit device (misal cuma buat pindah room) ikut ngirim deskripsi ke ChirpStack dari deviceType.
+  // Device hasil sinkron belum punya deviceType, jadi deskripsi aslinya di ChirpStack ketimpa "".
+  test.failing("[BUG] edit device tanpa deviceType seharusnya nggak menimpa deskripsi di ChirpStack", async () => {
+    prisma.device.findUnique.mockResolvedValue(device({ deviceType: null }));
+    prisma.device.update.mockResolvedValue(device({ roomId: "r9" }));
+
+    await uc.updateDevice("d1", { roomId: "r9" });
+
+    expect(sync.ensureCsDeviceRegistered).not.toHaveBeenCalledWith(DEV_EUI, expect.objectContaining({ description: "" }));
   });
 
   test("[positive] interval berubah -> dikirim ke meter", async () => {
@@ -529,6 +682,18 @@ describe("requestRelayCommand / powerDevice", () => {
     expect(enqueueRelayCommand).toHaveBeenCalledWith("c1");
     expect(events.emitDeviceCommand).toHaveBeenCalledWith(expect.objectContaining({ commandId: "c1", status: "pending" }));
     expect(new Date(result.deadline) - new Date(result.requestedAt)).toBe(30 * 60 * 1000);
+  });
+
+  // Device baru dari ChirpStack belum punya room; perintah power tetap harus bisa jalan.
+  test("[positive] device tanpa room -> perintah tetap dibuat dengan roomId null & masuk antrean", async () => {
+    const store = useStore({ devices: [device({ roomId: null, gatewayId: null })] });
+
+    const result = await uc.powerDevice("d1", "on", { userId: "u1" });
+
+    expect(result).toMatchObject({ commandId: "c1", deviceId: "d1", roomId: null, status: "pending" });
+    expect(store.log("c1").roomId).toBeNull();
+    expect(enqueueRelayCommand).toHaveBeenCalledWith("c1");
+    expect(events.emitDeviceCommand).toHaveBeenCalledWith(expect.objectContaining({ roomId: null, status: "pending" }));
   });
 
   test("[positive] dari schedule -> triggerType scheduled", async () => {
@@ -639,146 +804,6 @@ describe("requestRelayCommand / powerDevice", () => {
   });
 });
 
-describe("resync status setelah perintah gagal", () => {
-  // Kunci "status belum pasti" cuma boleh dibuka sama uplink asli dari meter,
-  // bukan karena sudah nunggu sekian lama.
-  const flush = async (times = 40) => {
-    for (let i = 0; i < times; i += 1) await new Promise((r) => setImmediate(r));
-  };
-
-  // Perintah gagal padahal downlink sudah terkirim -> status relai jadi tanda tanya.
-  async function failAfterSent() {
-    const store = useStore();
-    prisma.commandLog.count.mockResolvedValue(0);
-    const { commandId } = await uc.powerDevice("d1", "on");
-    store.log(commandId).sentAt = new Date();
-    await uc.failRelayCommand(commandId, new Error("worker mati"));
-    return store;
-  }
-
-  test("[positive] ping diulang sampai dapat uplink yang membawa relay_state", async () => {
-    cs.pingTelemetry
-      .mockRejectedValueOnce(new Error("timeout nunggu uplink"))
-      .mockResolvedValueOnce({ telemetry: {} })
-      .mockResolvedValueOnce({ telemetry: { relay_state: "OFF" } });
-
-    const store = await failAfterSent();
-    await flush();
-
-    expect(cs.pingTelemetry).toHaveBeenCalledTimes(3);
-    expect(cs.pingTelemetry).toHaveBeenLastCalledWith(DEV_EUI, { timeout: 150000 });
-    expect(store.device().status).toBe("off");
-    expect(events.emitDeviceStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "off", source: "telemetry" }),
-    );
-  });
-
-  test("[positive] berhenti begitu uplink pertama sudah membawa relay_state", async () => {
-    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "ON" } });
-    const store = await failAfterSent();
-    await flush();
-    expect(cs.pingTelemetry).toHaveBeenCalledTimes(1);
-    expect(store.device().status).toBe("on");
-  });
-
-  test("[negative] ada perintah baru yang pending -> resync mundur, biar tidak rebutan meter", async () => {
-    const store = useStore();
-    const { commandId } = await uc.powerDevice("d1", "on");
-    store.log(commandId).sentAt = new Date();
-    prisma.commandLog.count.mockResolvedValue(1);
-
-    await uc.failRelayCommand(commandId, new Error("worker mati"));
-    await flush();
-
-    expect(cs.pingTelemetry).not.toHaveBeenCalled();
-  });
-
-  test("[negative] meter tidak pernah menjawab -> menyerah setelah 20 percobaan, bukan loop selamanya", async () => {
-    cs.pingTelemetry.mockRejectedValue(new Error("meter tidur"));
-    await failAfterSent();
-    await flush(200);
-    expect(cs.pingTelemetry).toHaveBeenCalledTimes(20);
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("nyerah setelah 20 percobaan"));
-  });
-
-  test("[negative] device offline -> resync berhenti, nggak nguber uplink yang nggak bakal datang", async () => {
-    const store = useStore();
-    prisma.commandLog.count.mockResolvedValue(0);
-    const { commandId } = await uc.powerDevice("d1", "on");
-    store.log(commandId).sentAt = new Date();
-    // meter berhenti melapor sebelum resync sempat jalan
-    store.device().lastSeenAt = new Date(Date.now() - 60 * 60000);
-    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "ON" } });
-
-    await uc.failRelayCommand(commandId, new Error("worker mati"));
-    await flush();
-
-    // Nggak ada uplink yang bakal datang, jadi resync nggak usah dijalanin sama sekali.
-    expect(cs.pingTelemetry).not.toHaveBeenCalled();
-    expect(events.emitDeviceResync).not.toHaveBeenCalled();
-  });
-
-  test("[positive] device yang statusnya belum pasti langsung dikejar walau backend baru menyala", async () => {
-    useStore();
-    prisma.commandLog.count.mockResolvedValue(0);
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "cancelled", sentAt: new Date() },
-    ]);
-    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "ON" } });
-
-    const result = await uc.getUncertainStatusDeviceIds([
-      device({ lastSeenAt: new Date(Date.now() - 60000) }),
-    ]);
-    await flush();
-
-    expect([...result]).toEqual(["d1"]);
-    expect(cs.pingTelemetry).toHaveBeenCalledTimes(1);
-  });
-
-  // Progres ini yang dipakai UI buat nampilin "Resync in 12s (3/20)".
-  test("[positive] progres resync dikabarkan: percobaan ke berapa & kapan dicoba lagi", async () => {
-    cs.pingTelemetry
-      .mockRejectedValueOnce(new Error("meter tidur"))
-      .mockResolvedValueOnce({ telemetry: { relay_state: "ON" } });
-
-    await failAfterSent();
-    await flush();
-
-    const payloads = events.emitDeviceResync.mock.calls.map((c) => c[0]);
-    expect(payloads[0]).toMatchObject({ deviceId: "d1", resync: { attempt: 1, maxAttempts: 20, nextRetryAt: null } });
-    expect(payloads[1].resync).toMatchObject({ attempt: 1, nextRetryAt: expect.any(String) });
-    expect(payloads[2].resync).toMatchObject({ attempt: 2, nextRetryAt: null });
-    // Beres -> resync null, penanda hitung mundur di UI ikut hilang.
-    expect(payloads[payloads.length - 1].resync).toBeNull();
-  });
-
-  test("[positive] progres resync bisa dibaca lagi setelah halaman di-reload", async () => {
-    cs.pingTelemetry.mockRejectedValue(new Error("meter tidur"));
-    await failAfterSent();
-    await new Promise((r) => setImmediate(r));
-
-    const states = uc.getResyncStateByDevice(["d1", "d2"]);
-    expect(states.get("d1")).toMatchObject({ attempt: expect.any(Number), maxAttempts: 20 });
-    expect(states.has("d2")).toBe(false);
-  });
-
-  test("[negative] dipanggil berkali-kali -> tetap satu proses resync per device", async () => {
-    useStore();
-    prisma.commandLog.count.mockResolvedValue(0);
-    prisma.commandLog.findMany.mockResolvedValue([
-      { deviceId: "d1", status: "cancelled", sentAt: new Date() },
-    ]);
-    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "ON" } });
-
-    const online = device({ lastSeenAt: new Date(Date.now() - 60000) });
-    await uc.getUncertainStatusDeviceIds([online]);
-    await uc.getUncertainStatusDeviceIds([online]);
-    await flush();
-
-    expect(cs.pingTelemetry).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("processRelayCommand", () => {
   async function requestThenProcess(action = "on", storeOptions) {
     const store = useStore(storeOptions);
@@ -800,30 +825,33 @@ describe("processRelayCommand", () => {
     expect(uc.isDeviceBusy("d1")).toBe(false);
   });
 
-  test("[positive] sentAt diisi tepat sebelum downlink dikirim", async () => {
-    cs.setRelay.mockResolvedValue({ data: { stateConfirmed: true } });
-    const { store, commandId } = await requestThenProcess("on");
-    expect(store.log(commandId).sentAt).toBeInstanceOf(Date);
+  // Perintah dibuat 10 menit lalu & device sempat lapor sesudahnya (lastSeenAt 60 detik lalu),
+  // jadi kegagalan sementara nggak dianggap device mati.
+  const pendingCommandFromMinutesAgo = (minutes) => ({
+    id: "c1",
+    roomId: ROOM,
+    deviceId: "d1",
+    action: "on",
+    triggerType: "manual",
+    status: "pending",
+    notes: null,
+    executedAt: new Date(Date.now() - minutes * 60000),
   });
 
-  test("[negative] perintah yang belum diproses -> sentAt masih kosong (masih bisa dibatalkan)", async () => {
-    const store = useStore();
-    const { commandId } = await uc.powerDevice("d1", "on");
-    expect(store.log(commandId).sentAt ?? null).toBeNull();
-  });
-
-  test("[positive] retry: 408 wake -> tidak terkonfirmasi -> sukses di percobaan ke-3", async () => {
+  test("[positive] retry: 408 wake -> tidak terkonfirmasi -> sukses di percobaan ke-3 (meter masih ngelapor)", async () => {
     cs.setRelay
       .mockRejectedValueOnce(httpErr(408, "[ChirpStack] HTTP 408 di /api/relay/wake: Meter tidak merespons wake-up"))
       .mockResolvedValueOnce({ data: { stateConfirmed: false } })
       .mockResolvedValueOnce({ data: { stateConfirmed: true } });
     cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "OFF" } });
+    const store = useStore({ logs: [pendingCommandFromMinutesAgo(10)] });
 
-    const { store, commandId } = await requestThenProcess("on");
+    await uc.processRelayCommand("c1");
 
     expect(cs.setRelay).toHaveBeenCalledTimes(3);
     expect(cs.pingTelemetry).toHaveBeenCalledTimes(1); // hanya setelah "tidak terkonfirmasi", bukan setelah 408 wake
-    expect(store.log(commandId)).toMatchObject({ status: "success", notes: "Berhasil pada percobaan ke-3" });
+    expect(store.log("c1")).toMatchObject({ status: "success", notes: "Berhasil pada percobaan ke-3" });
+    expect(store.device().commFailedAt ?? null).toBeNull();
   });
 
   test("[positive] konfirmasi hilang tapi telemetry menunjukkan relai sudah pindah -> success tanpa retry", async () => {
@@ -891,9 +919,9 @@ describe("processRelayCommand", () => {
     expect(store.device().status).toBe("on");
   });
 
-  // Mati lampu di tengah perintah: dulu nunggu 30 menit, sekarang langsung gagal.
-  // Mati lampu: meter nggak nyaut & nggak ada uplink baru -> ditandai offline.
-  test("[negative] dua percobaan gagal tanpa uplink -> device ditandai offline & perintah dihentikan", async () => {
+  // Mati lampu di tengah perintah: dulu nunggu 30 menit, sekarang begitu satu percobaan gagal
+  // dan belum ada uplink sejak perintah dibuat, device langsung ditandai offline.
+  test("[negative] satu percobaan gagal tanpa uplink -> device ditandai offline & perintah dihentikan", async () => {
     cs.setRelay.mockRejectedValue(
       Object.assign(new Error("[ChirpStack] HTTP 408 di /api/relay/wake: Meter tidak merespons wake-up"), { status: 408 }),
     );
@@ -902,7 +930,7 @@ describe("processRelayCommand", () => {
 
     await uc.processRelayCommand(commandId);
 
-    expect(cs.setRelay).toHaveBeenCalledTimes(2);
+    expect(cs.setRelay).toHaveBeenCalledTimes(1);
     expect(store.device().commFailedAt).toBeInstanceOf(Date);
     expect(store.log(commandId)).toMatchObject({
       status: "failed",
@@ -910,16 +938,30 @@ describe("processRelayCommand", () => {
     });
   });
 
-  test("[positive] percobaan pertama gagal tapi meter sempat lapor -> belum ditandai offline", async () => {
-    cs.setRelay.mockResolvedValueOnce({ data: { stateConfirmed: false } }).mockResolvedValueOnce({ data: { stateConfirmed: true } });
-    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "OFF" } });
-    const store = useStore();
+  test("[negative] device ditandai offline -> dikabarin lewat socket biar UI langsung nutup switch", async () => {
+    cs.setRelay.mockRejectedValue(
+      Object.assign(new Error("[ChirpStack] HTTP 408 di /api/relay/wake: Meter tidak merespons wake-up"), { status: 408 }),
+    );
+    useStore();
     const { commandId } = await uc.powerDevice("d1", "on");
 
     await uc.processRelayCommand(commandId);
 
+    expect(events.emitDeviceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: "d1", online: false, source: "command" }),
+    );
+  });
+
+  test("[positive] percobaan gagal tapi meter sempat lapor sejak perintah dibuat -> belum ditandai offline", async () => {
+    cs.setRelay.mockResolvedValueOnce({ data: { stateConfirmed: false } }).mockResolvedValueOnce({ data: { stateConfirmed: true } });
+    cs.pingTelemetry.mockResolvedValue({ telemetry: { relay_state: "OFF" } });
+    const store = useStore({ logs: [pendingCommandFromMinutesAgo(10)] });
+
+    await uc.processRelayCommand("c1");
+
     expect(store.device().commFailedAt ?? null).toBeNull();
-    expect(store.log(commandId).status).toBe("success");
+    expect(store.log("c1").status).toBe("success");
+    expect(cs.setRelay).toHaveBeenCalledTimes(2);
   });
 
   test("[positive] uplink masuk -> tanda gagal komunikasi dibersihkan (online lagi)", async () => {
