@@ -227,7 +227,6 @@ deploy:
         cd $BASE_DIR && $API_DIR &&
         git fetch origin $BRANCH &&
         git reset --hard origin/$BRANCH &&
-        cd $API_DIR &&
         $DOCKER_COMMAND &&
         echo 'Deployment of EMS Service staging completed.'
       "
