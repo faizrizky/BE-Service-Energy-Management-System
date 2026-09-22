@@ -481,7 +481,7 @@ describe("powerRoom", () => {
     await expect(roomUseCase.powerRoom("x", "on")).rejects.toMatchObject({ status: 404 });
   });
 
-  test("[positive] setiap device dimasukkan antrean & ringkasan pending/failed", async () => {
+  test("[positive] setiap device dimasukkan antrean (skipIfOffline) & ringkasan pending/failed", async () => {
     const devices = [device({ id: "d1" }), device({ id: "d2", eui: null })];
     prisma.room.findUnique.mockResolvedValue({ id: "r1", devices });
     deviceUseCase.requestRelayCommand
@@ -490,15 +490,35 @@ describe("powerRoom", () => {
 
     const result = await roomUseCase.powerRoom("r1", "on", { userId: "u1" });
 
-    expect(deviceUseCase.requestRelayCommand).toHaveBeenNthCalledWith(1, devices[0], "on", { userId: "u1" });
-    expect(result.summary).toEqual({ total: 2, pending: 1, failed: 1 });
+    expect(deviceUseCase.requestRelayCommand).toHaveBeenNthCalledWith(1, devices[0], "on", {
+      userId: "u1",
+      skipIfOffline: true,
+    });
+    expect(result.summary).toEqual({ total: 2, pending: 1, failed: 1, skipped: 0 });
     expect(events.emitRoomPower).toHaveBeenCalledWith("r1", result.results);
+  });
+
+  test("[positive] device offline diringkas sebagai 'skipped', bukan menggagalkan seluruh room", async () => {
+    const devices = [device({ id: "d1" }), device({ id: "d2" })];
+    prisma.room.findUnique.mockResolvedValue({ id: "r1", devices });
+    deviceUseCase.requestRelayCommand
+      .mockResolvedValueOnce({ deviceId: "d1", status: "pending" })
+      .mockResolvedValueOnce({ deviceId: "d2", status: "skipped", notes: "Device offline" });
+
+    const result = await roomUseCase.powerRoom("r1", "on");
+
+    expect(result.summary).toEqual({ total: 2, pending: 1, failed: 0, skipped: 1 });
   });
 
   test("[negative] room tanpa device -> hasil kosong, tetap sukses", async () => {
     prisma.room.findUnique.mockResolvedValue({ id: "r1", devices: [] });
     const result = await roomUseCase.powerRoom("r1", "off");
-    expect(result).toEqual({ roomId: "r1", action: "off", results: [], summary: { total: 0, pending: 0, failed: 0 } });
+    expect(result).toEqual({
+      roomId: "r1",
+      action: "off",
+      results: [],
+      summary: { total: 0, pending: 0, failed: 0, skipped: 0 },
+    });
   });
 
   test("[negative] satu device melempar error -> seluruh request gagal (tidak dilanjutkan)", async () => {

@@ -638,14 +638,15 @@ describe("deleteDevice", () => {
     await expect(uc.deleteDevice("x")).rejects.toMatchObject({ status: 404 });
   });
 
-  test("[positive] hapus di ChirpStack, lalu reading dihapus & log/schedule dilepas dalam transaksi", async () => {
+  test("[positive] hapus di ChirpStack, lalu reading dihapus & command log dilepas dalam transaksi", async () => {
     prisma.device.findUnique.mockResolvedValue({ id: "d1", eui: DEV_EUI, name: "M" });
     prisma.device.delete.mockResolvedValue({ id: "d1" });
     await uc.deleteDevice("d1");
     expect(sync.removeCsDevice).toHaveBeenCalledWith(DEV_EUI);
     expect(prisma.energyReading.deleteMany).toHaveBeenCalledWith({ where: { deviceId: "d1" } });
     expect(prisma.commandLog.updateMany).toHaveBeenCalledWith({ where: { deviceId: "d1" }, data: { deviceId: null } });
-    expect(prisma.schedule.updateMany).toHaveBeenCalledWith({ where: { deviceId: "d1" }, data: { deviceId: null } });
+    // Schedule sekarang level room, bukan device -> hapus device gak nyentuh tabel schedule sama sekali.
+    expect(prisma.schedule.updateMany).not.toHaveBeenCalled();
     expect(events.emitDeviceDeleted).toHaveBeenCalledWith("d1");
   });
 

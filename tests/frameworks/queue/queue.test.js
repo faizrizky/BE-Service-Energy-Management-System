@@ -210,6 +210,18 @@ describe("scheduleWorker", () => {
     jest.setSystemTime(date);
   }
 
+  // processMinute nge-query pake `include` (room+devices), expireMissedSchedules
+  // pake `select` (id/scheduledDate/startTime/endTime) -> dibedain lewat itu,
+  // biar satu mock findMany bisa jawab dua query yang beda bentuk dalam satu tick.
+  function mockScheduleQueries({ due = [], expiredCandidates = [] } = {}) {
+    prisma.schedule.findMany.mockImplementation((args) =>
+      Promise.resolve(args.select ? expiredCandidates : due),
+    );
+  }
+
+  const processMinuteCalls = () => prisma.schedule.findMany.mock.calls.filter((c) => c[0].include);
+  const expireSweepCalls = () => prisma.schedule.findMany.mock.calls.filter((c) => c[0].select);
+
   beforeEach(() => {
     jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
     jest.isolateModules(() => {
@@ -217,66 +229,70 @@ describe("scheduleWorker", () => {
     });
     deviceUseCase.powerDevice.mockResolvedValue({});
     prisma.schedule.update.mockResolvedValue({});
+    prisma.schedule.updateMany.mockResolvedValue({ count: 0 });
+    mockScheduleQueries();
   });
 
   afterEach(() => jest.useRealTimers());
 
   const schedule = (overrides = {}) => ({
     id: "s1",
+    name: "Jadwal AC",
     action: "on",
     startTime: "08:00",
     endTime: null,
     repeatType: "daily",
     repeatDays: null,
     scheduledDate: new Date("2026-09-01"),
-    device: { id: "d1" },
-    room: { devices: [{ id: "d1" }, { id: "d2" }] },
+    room: { name: "Server", devices: [{ id: "d1" }, { id: "d2" }] },
     ...overrides,
   });
 
-  test("[positive] start trigger device-level -> perintah action ke device itu", async () => {
+  test("[positive] start trigger -> semua device di room dapet perintah (skipIfOffline)", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule()]);
+    mockScheduleQueries({ due: [schedule()] });
     await worker.executeDueSchedules();
-    expect(prisma.schedule.findMany.mock.calls[0][0].where).toEqual({ status: "active", OR: [{ startTime: "08:00" }, { endTime: "08:00" }] });
-    expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1" });
+    expect(processMinuteCalls()[0][0].where).toEqual({ status: "active", OR: [{ startTime: "08:00" }, { endTime: "08:00" }] });
+    expect(deviceUseCase.powerDevice.mock.calls.map((c) => c[0])).toEqual(["d1", "d2"]);
+    expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1", skipIfOffline: true });
     expect(prisma.schedule.update).not.toHaveBeenCalled();
   });
 
-  test("[positive] schedule level room -> semua device di room", async () => {
+  test("[negative] room gak punya device -> cuma warning, gak ada perintah dikirim", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ device: null })]);
+    mockScheduleQueries({ due: [schedule({ room: { name: "Kosong", devices: [] } })] });
     await worker.executeDueSchedules();
-    expect(deviceUseCase.powerDevice.mock.calls.map((c) => c[0])).toEqual(["d1", "d2"]);
+    expect(deviceUseCase.powerDevice).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('room "Kosong" tidak memiliki device'));
   });
 
   test("[positive] end trigger -> action dibalik & one-time ditandai completed", async () => {
     setNow(at(17, 0));
-    prisma.schedule.findMany.mockResolvedValue([
-      schedule({ endTime: "17:00", repeatType: "none", scheduledDate: new Date("2026-09-14") }),
-    ]);
+    mockScheduleQueries({
+      due: [schedule({ endTime: "17:00", repeatType: "none", scheduledDate: new Date("2026-09-14") })],
+    });
     await worker.executeDueSchedules();
-    expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "off", { scheduleId: "s1" });
+    expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "off", { scheduleId: "s1", skipIfOffline: true });
     expect(prisma.schedule.update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { status: "completed" } });
   });
 
   test("[positive] one-time tanpa endTime selesai saat start trigger", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ repeatType: "none", scheduledDate: new Date("2026-09-14") })]);
+    mockScheduleQueries({ due: [schedule({ repeatType: "none", scheduledDate: new Date("2026-09-14") })] });
     await worker.executeDueSchedules();
     expect(prisma.schedule.update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { status: "completed" } });
   });
 
   test("[negative] kandidat tidak jatuh tempo hari ini (weekly hari lain) -> tidak ada perintah", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ repeatType: "weekly", repeatDays: [3] })]);
+    mockScheduleQueries({ due: [schedule({ repeatType: "weekly", repeatDays: [3] })] });
     await worker.executeDueSchedules();
     expect(deviceUseCase.powerDevice).not.toHaveBeenCalled();
   });
 
   test("[negative] satu device gagal -> device lain tetap diproses & status tetap diperbarui", async () => {
     setNow(at(8, 0));
-    prisma.schedule.findMany.mockResolvedValue([schedule({ device: null, repeatType: "none", scheduledDate: new Date("2026-09-14") })]);
+    mockScheduleQueries({ due: [schedule({ repeatType: "none", scheduledDate: new Date("2026-09-14") })] });
     deviceUseCase.powerDevice.mockRejectedValueOnce(Object.assign(new Error("sibuk"), { status: 409 }));
     await worker.executeDueSchedules();
     expect(deviceUseCase.powerDevice).toHaveBeenCalledTimes(2);
@@ -285,33 +301,30 @@ describe("scheduleWorker", () => {
   });
 
   test("[positive] catch-up menit yang terlewat sejak pengecekan terakhir", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
     setNow(at(8, 0));
     await worker.executeDueSchedules();
     setNow(at(8, 3));
     await worker.executeDueSchedules();
-    const times = prisma.schedule.findMany.mock.calls.map((c) => c[0].where.OR[0].startTime);
+    const times = processMinuteCalls().map((c) => c[0].where.OR[0].startTime);
     expect(times).toEqual(["08:00", "08:01", "08:02", "08:03"]);
   });
 
   test("[negative] downtime panjang -> catch-up dipotong 5 menit terakhir", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
     setNow(at(8, 0));
     await worker.executeDueSchedules();
     setNow(at(9, 0));
     await worker.executeDueSchedules();
-    const times = prisma.schedule.findMany.mock.calls.slice(1).map((c) => c[0].where.OR[0].startTime);
+    const times = processMinuteCalls().slice(1).map((c) => c[0].where.OR[0].startTime);
     expect(times).toEqual(["08:56", "08:57", "08:58", "08:59", "09:00"]);
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Catch-up 60 menit"));
   });
 
   test("[negative] dua pengecekan di menit yang sama -> menit itu tidak dieksekusi dua kali", async () => {
-    prisma.schedule.findMany.mockResolvedValue([]);
     setNow(at(8, 0, 5));
     await worker.executeDueSchedules();
     setNow(at(8, 0, 50));
     await worker.executeDueSchedules();
-    expect(prisma.schedule.findMany).toHaveBeenCalledTimes(1);
+    expect(processMinuteCalls()).toHaveLength(1);
   });
 
   test("[positive] jam dicek di SCHEDULE_TIMEZONE, bukan zona waktu server", async () => {
@@ -321,12 +334,13 @@ describe("scheduleWorker", () => {
       jest.isolateModules(() => {
         worker = require("../../../src/frameworks/queue/scheduleWorker");
       });
+      mockScheduleQueries();
       // 08:00 WIB (TZ proses) = 01:00 UTC
       setNow(at(8, 0));
-      prisma.schedule.findMany.mockResolvedValue([schedule({ startTime: "01:00" })]);
+      mockScheduleQueries({ due: [schedule({ startTime: "01:00" })] });
       await worker.executeDueSchedules();
-      expect(prisma.schedule.findMany.mock.calls[0][0].where.OR).toEqual([{ startTime: "01:00" }, { endTime: "01:00" }]);
-      expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1" });
+      expect(processMinuteCalls()[0][0].where.OR).toEqual([{ startTime: "01:00" }, { endTime: "01:00" }]);
+      expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1", skipIfOffline: true });
     } finally {
       if (previous === undefined) delete process.env.SCHEDULE_TIMEZONE;
       else process.env.SCHEDULE_TIMEZONE = previous;
@@ -338,5 +352,65 @@ describe("scheduleWorker", () => {
     expect(w.name).toBe("schedule-executor");
     w.handlers.failed({}, new Error("boom"));
     expect(logger.error).toHaveBeenCalledWith("[Scheduler] Job gagal:", "boom");
+  });
+
+  describe("expireMissedSchedules - nyapu schedule yang kelewat tanpa sempat dieksekusi", () => {
+    test("[positive] sekali-jalan, scheduledDate udah lewat, masih 'active' -> ditandai completed", async () => {
+      setNow(at(8, 0));
+      mockScheduleQueries({
+        expiredCandidates: [
+          { id: "exp-1", repeatType: "none", scheduledDate: new Date("2026-09-10"), startTime: "08:00", endTime: "17:00" },
+        ],
+      });
+      await worker.executeDueSchedules();
+      expect(expireSweepCalls()[0][0]).toEqual({
+        where: { status: "active", repeatType: "none" },
+        select: { id: true, scheduledDate: true, startTime: true, endTime: true },
+      });
+      expect(prisma.schedule.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["exp-1"] } },
+        data: { status: "completed" },
+      });
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("1 schedule expired"));
+    });
+
+    test("[negative] scheduledDate hari ini -> belum expired, tidak disentuh", async () => {
+      setNow(at(8, 0));
+      mockScheduleQueries({
+        expiredCandidates: [
+          { id: "today-1", repeatType: "none", scheduledDate: new Date("2026-09-14"), startTime: "08:00", endTime: "17:00" },
+        ],
+      });
+      await worker.executeDueSchedules();
+      expect(prisma.schedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("[negative] schedule berulang (daily/weekly) gak pernah kena sweep", async () => {
+      setNow(at(8, 0));
+      // repeatType: "none" di query where, jadi in-practice kandidatnya cuma one-time,
+      // tapi tetep dipastiin isScheduleExpired sendiri menolak repeatType != none kalau kelolos.
+      mockScheduleQueries({
+        expiredCandidates: [
+          { id: "daily-1", repeatType: "daily", scheduledDate: new Date("2020-01-01"), startTime: "08:00", endTime: "17:00" },
+        ],
+      });
+      await worker.executeDueSchedules();
+      expect(prisma.schedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    test("[positive] campuran expired & belum -> cuma yang expired yang ditandai", async () => {
+      setNow(at(8, 0));
+      mockScheduleQueries({
+        expiredCandidates: [
+          { id: "exp-1", repeatType: "none", scheduledDate: new Date("2026-09-10"), startTime: "08:00", endTime: "17:00" },
+          { id: "not-yet", repeatType: "none", scheduledDate: new Date("2026-09-14"), startTime: "08:00", endTime: "17:00" },
+        ],
+      });
+      await worker.executeDueSchedules();
+      expect(prisma.schedule.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["exp-1"] } },
+        data: { status: "completed" },
+      });
+    });
   });
 });
