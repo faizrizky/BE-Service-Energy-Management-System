@@ -1,4 +1,4 @@
-const { prisma } = require('../../../frameworks/database/prismaClient');
+const { prisma } = require("../../../frameworks/database/prismaClient");
 
 /**
  * Ngambil profil user dari id plus nama role-nya. Kalo user-nya udah nggak
@@ -9,11 +9,17 @@ const { prisma } = require('../../../frameworks/database/prismaClient');
 async function getMe(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { role: true },
+    include: {
+      role: {
+        include: {
+          permissions: { include: { permission: true } },
+        },
+      },
+    },
   });
 
   if (!user) {
-    const err = new Error('User tidak ditemukan');
+    const err = new Error("User tidak ditemukan");
     err.status = 404;
     throw err;
   }
@@ -27,6 +33,12 @@ async function getMe(userId) {
     address: user.address,
     avatarUrl: user.avatarUrl,
     role: user.role.name,
+    roleId: user.role.id,
+    permissions: user.role.permissions.map((rp) => ({
+      id: rp.permission.id,
+      module: rp.permission.module,
+      action: rp.permission.action,
+    })),
   };
 }
 
