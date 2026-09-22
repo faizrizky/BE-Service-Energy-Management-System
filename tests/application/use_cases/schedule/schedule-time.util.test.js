@@ -14,6 +14,8 @@ const {
   isEndDue,
   getZonedParts,
   getTodayInScheduleZone,
+  resolveScheduledDate,
+  isScheduleExpired,
 } = require("../../../../src/application/use_cases/schedule/schedule-time.util");
 
 describe("timeToMinutes", () => {
@@ -468,6 +470,80 @@ describe("getTodayInScheduleZone", () => {
     expect(getTodayInScheduleZone(new Date("2026-08-23T23:30:00.000Z")).toISOString()).toBe(
       "2026-08-24T00:00:00.000Z",
     );
+  });
+});
+
+describe("resolveScheduledDate", () => {
+  test("[positive] berulang (daily/weekly) -> selalu mulai hari ini, gak peduli jam sekarang", () => {
+    const now = new Date("2026-08-23T10:00:00.000Z"); // 17:00 WIB
+    expect(resolveScheduledDate({ startTime: "08:00", repeatType: "daily" }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-23T00:00:00.000Z",
+    );
+    expect(resolveScheduledDate({ startTime: "20:00", repeatType: "weekly" }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-23T00:00:00.000Z",
+    );
+  });
+
+  test("[positive] sekali jalan, startTime masih di depan jam sekarang -> hari ini", () => {
+    const now = new Date("2026-08-23T03:00:00.000Z"); // 10:00 WIB
+    expect(resolveScheduledDate({ startTime: "14:00", repeatType: "none" }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-23T00:00:00.000Z",
+    );
+  });
+
+  test("[positive] sekali jalan, startTime sama atau udah lewat jam sekarang -> besok", () => {
+    const now = new Date("2026-08-23T03:00:00.000Z"); // 10:00 WIB
+    expect(resolveScheduledDate({ startTime: "10:00", repeatType: "none" }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-24T00:00:00.000Z",
+    );
+    expect(resolveScheduledDate({ startTime: "09:00", repeatType: "none" }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-24T00:00:00.000Z",
+    );
+  });
+
+  test("[edge] repeatType kosong/none diperlakukan sama (bukan berulang)", () => {
+    const now = new Date("2026-08-23T03:00:00.000Z"); // 10:00 WIB
+    expect(resolveScheduledDate({ startTime: "14:00", repeatType: undefined }, now, "Asia/Jakarta").toISOString()).toBe(
+      "2026-08-23T00:00:00.000Z",
+    );
+  });
+
+  test("[positive] default now/timeZone -> pake Date.now() & SCHEDULE_TIMEZONE config", () => {
+    expect(resolveScheduledDate({ startTime: "00:00", repeatType: "daily" })).toBeInstanceOf(Date);
+  });
+});
+
+describe("isScheduleExpired", () => {
+  const today = toDateOnly(new Date("2026-09-22T00:00:00.000Z"));
+
+  test("[negative] berulang (daily/weekly) -> gak pernah expired, gak peduli scheduledDate", () => {
+    expect(isScheduleExpired({ repeatType: "daily", scheduledDate: new Date("2020-01-01") }, today)).toBe(false);
+    expect(isScheduleExpired({ repeatType: "weekly", scheduledDate: new Date("2020-01-01") }, today)).toBe(false);
+  });
+
+  test("[positive] sekali jalan, scheduledDate hari ini -> belum expired", () => {
+    const schedule = { repeatType: "none", scheduledDate: today, startTime: "08:00", endTime: "17:00" };
+    expect(isScheduleExpired(schedule, today)).toBe(false);
+  });
+
+  test("[positive] sekali jalan tanpa cross-midnight, scheduledDate kemarin -> expired", () => {
+    const schedule = { repeatType: "none", scheduledDate: addDays(today, -1), startTime: "08:00", endTime: "17:00" };
+    expect(isScheduleExpired(schedule, today)).toBe(true);
+  });
+
+  test("[positive] sekali jalan tanpa endTime, scheduledDate kemarin -> expired", () => {
+    const schedule = { repeatType: "none", scheduledDate: addDays(today, -1), startTime: "08:00", endTime: null };
+    expect(isScheduleExpired(schedule, today)).toBe(true);
+  });
+
+  test("[edge] cross-midnight, scheduledDate kemarin -> hari terakhir mungkin kepicu itu HARI INI, belum expired", () => {
+    const schedule = { repeatType: "none", scheduledDate: addDays(today, -1), startTime: "23:00", endTime: "01:00" };
+    expect(isScheduleExpired(schedule, today)).toBe(false);
+  });
+
+  test("[edge] cross-midnight, scheduledDate 2 hari lalu -> hari terakhir mungkin kepicu itu KEMARIN, expired", () => {
+    const schedule = { repeatType: "none", scheduledDate: addDays(today, -2), startTime: "23:00", endTime: "01:00" };
+    expect(isScheduleExpired(schedule, today)).toBe(true);
   });
 });
 

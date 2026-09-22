@@ -292,6 +292,7 @@ describe("room.validator", () => {
 
 describe("schedule.validator", () => {
   const valid = {
+    name: "Jadwal AC",
     roomId: UUID,
     action: "on",
     scheduledDate: "2026-09-20",
@@ -302,7 +303,7 @@ describe("schedule.validator", () => {
     ok(scheduleSchema, valid);
     ok(scheduleSchema, {
       ...valid,
-      deviceId: UUID_2,
+      description: "Nyalain AC tiap pagi kerja",
       endTime: "17:00",
       repeatType: "weekly",
       repeatDays: [1, 3, 5],
@@ -310,9 +311,30 @@ describe("schedule.validator", () => {
     });
   });
 
-  test("[positive] deviceId & endTime boleh null atau string kosong", () => {
-    ok(scheduleSchema, { ...valid, deviceId: null, endTime: null });
-    ok(scheduleSchema, { ...valid, deviceId: "", endTime: "" });
+  test("[positive] description & endTime boleh null atau string kosong", () => {
+    ok(scheduleSchema, { ...valid, description: null, endTime: null });
+    ok(scheduleSchema, { ...valid, description: "", endTime: "" });
+  });
+
+  test("[positive] deviceId boleh dikirim kosong (kompatibilitas lama), asal null/undefined/string kosong", () => {
+    ok(scheduleSchema, { ...valid, deviceId: undefined });
+    ok(scheduleSchema, { ...valid, deviceId: null });
+    ok(scheduleSchema, { ...valid, deviceId: "" });
+  });
+
+  test("[negative] deviceId diisi (UUID device beneran) -> ditolak, schedule cuma level room sekarang", () => {
+    expect(messages(scheduleSchema, { ...valid, deviceId: UUID_2 })).toEqual([
+      "deviceId tidak didukung lagi: jadwal berlaku untuk seluruh device di room",
+    ]);
+  });
+
+  test("[negative] name kosong atau kepanjangan (>120)", () => {
+    expect(messages(scheduleSchema, { ...valid, name: "" })).toEqual(["name wajib diisi"]);
+    fails(scheduleSchema, { ...valid, name: "a".repeat(121) });
+  });
+
+  test("[negative] description kepanjangan (>500)", () => {
+    fails(scheduleSchema, { ...valid, description: "a".repeat(501) });
   });
 
   test("[positive] batas jam 00:00 dan 23:59", () => {
@@ -338,14 +360,20 @@ describe("schedule.validator", () => {
     fails(scheduleSchema, { ...valid, status: "paused" });
   });
 
+  test("[positive] repeatDays kesimpen kalau dikirim (dulu ke-strip diam-diam gara-gara typo validator)", () => {
+    expect(ok(scheduleSchema, { ...valid, repeatType: "weekly", repeatDays: [0, 3] }).repeatDays).toEqual([0, 3]);
+  });
+
   test("[negative] repeatDays di luar 0..6 atau bukan integer", () => {
     fails(scheduleSchema, { ...valid, repeatDays: [7] });
     fails(scheduleSchema, { ...valid, repeatDays: [-1] });
     fails(scheduleSchema, { ...valid, repeatDays: [1.5] });
   });
 
-  // Celah validasi: backend menerima kombinasi yang tidak pernah bisa dieksekusi.
-  test.failing("[BUG] repeatType 'weekly' tanpa repeatDays seharusnya ditolak", () => {
+  // Validator sendiri gak nolak ini (repeatDays gak dikaitkan ke repeatType di sini), tapi
+  // dicegah di layer usecase lewat assertScheduleRules (schedule.usecase.js), jadi gak bisa
+  // beneran lolos lewat API publik.
+  test.failing("[BUG di layer validator, tapi ke-tutup assertScheduleRules di usecase] repeatType 'weekly' tanpa repeatDays seharusnya ditolak", () => {
     fails(scheduleSchema, { ...valid, repeatType: "weekly" });
   });
 
@@ -356,6 +384,7 @@ describe("schedule.validator", () => {
   test("[positive] update partial", () => {
     ok(updateScheduleSchema, {});
     ok(updateScheduleSchema, { status: "completed" });
+    ok(updateScheduleSchema, { name: "Nama baru" });
   });
 });
 

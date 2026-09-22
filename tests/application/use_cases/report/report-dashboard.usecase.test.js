@@ -279,40 +279,44 @@ describe("getTopRiskyRooms", () => {
 describe("getActiveSchedules", () => {
   const schedule = {
     id: "s1",
-    room: { name: "Server", location: "Lt 1" },
-    device: null,
+    room: { name: "Server", location: "Lt 1", _count: { devices: 3 } },
     scheduledDate: new Date("2026-09-14"),
     startTime: "08:00",
     endTime: "17:00",
     repeatType: "daily",
   };
 
-  test("[positive] status 'active' -> recurring atau sudah mulai, mapping 'All devices'", async () => {
+  test("[positive] status 'active' -> aktif & scheduledDate udah nyampe/lewat, mapping deviceCount dari room", async () => {
     prisma.schedule.findMany.mockResolvedValue([schedule]);
     const [row] = await report.getActiveSchedules("active");
 
     const { where, take } = prisma.schedule.findMany.mock.calls[0][0];
-    expect(where.status).toBe("active");
-    expect(where.OR).toHaveLength(2);
+    expect(where).toEqual({ status: "active", scheduledDate: { lte: expect.any(Date) } });
     expect(take).toBe(20);
-    expect(row).toMatchObject({ component: "All devices", deviceEui: "-", time: "08:00 - 17:00", repeat: true });
+    expect(row).toMatchObject({
+      id: "s1",
+      roomName: "Server",
+      roomLocation: "Lt 1",
+      deviceCount: 3,
+      time: "08:00 - 17:00",
+      repeat: true,
+    });
   });
 
-  test("[positive] status 'upcoming' -> hanya one-time di masa depan", async () => {
+  test("[positive] status 'upcoming' -> scheduledDate di masa depan, apa pun repeatType-nya", async () => {
     prisma.schedule.findMany.mockResolvedValue([
-      { ...schedule, device: { name: "AC", eui: "E1" }, endTime: null, repeatType: "none" },
+      { ...schedule, endTime: null, repeatType: "none" },
     ]);
     const [row] = await report.getActiveSchedules("upcoming");
     const { where } = prisma.schedule.findMany.mock.calls[0][0];
-    expect(where.repeatType).toBe("none");
-    expect(where.scheduledDate.gt).toBeInstanceOf(Date);
-    expect(row).toMatchObject({ component: "AC", deviceEui: "E1", time: "08:00", repeat: false });
+    expect(where).toEqual({ status: "active", scheduledDate: { gt: expect.any(Date) } });
+    expect(row).toMatchObject({ time: "08:00", repeat: false });
   });
 
   test("[negative] status tidak dikenal diperlakukan sebagai 'active'", async () => {
     prisma.schedule.findMany.mockResolvedValue([]);
     await report.getActiveSchedules("whatever");
-    expect(prisma.schedule.findMany.mock.calls[0][0].where.OR).toBeDefined();
+    expect(prisma.schedule.findMany.mock.calls[0][0].where.scheduledDate.lte).toBeInstanceOf(Date);
   });
 });
 

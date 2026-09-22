@@ -92,7 +92,7 @@ describe("refreshAccessToken", () => {
 });
 
 describe("getMe", () => {
-  test("[positive] profil tanpa passwordHash, role berupa nama", async () => {
+  test("[positive] profil tanpa passwordHash, role & daftar permission (module+action+id)", async () => {
     prisma.user.findUnique.mockResolvedValue({
       id: "u1",
       fullName: "Admin",
@@ -102,7 +102,14 @@ describe("getMe", () => {
       address: "Jakarta",
       avatarUrl: null,
       passwordHash: "secret",
-      role: { id: "r1", name: "Administrator" },
+      role: {
+        id: "r1",
+        name: "Administrator",
+        permissions: [
+          { permission: { id: "perm-1", module: "schedule", action: "create" } },
+          { permission: { id: "perm-2", module: "device", action: "read" } },
+        ],
+      },
     });
 
     await expect(getMe("u1")).resolves.toEqual({
@@ -114,7 +121,30 @@ describe("getMe", () => {
       address: "Jakarta",
       avatarUrl: null,
       role: "Administrator",
+      roleId: "r1",
+      permissions: [
+        { id: "perm-1", module: "schedule", action: "create" },
+        { id: "perm-2", module: "device", action: "read" },
+      ],
     });
+  });
+
+  test("[positive] role tanpa permission sama sekali -> array kosong, bukan error", async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: "u2",
+      fullName: "Guest",
+      username: "guest",
+      email: "g@test.com",
+      phone: null,
+      address: null,
+      avatarUrl: null,
+      passwordHash: "secret",
+      role: { id: "r2", name: "Viewer", permissions: [] },
+    });
+
+    const result = await getMe("u2");
+    expect(result.permissions).toEqual([]);
+    expect(result.roleId).toBe("r2");
   });
 
   test("[negative] user sudah dihapus -> 404", async () => {

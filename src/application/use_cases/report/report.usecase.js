@@ -1,8 +1,6 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
-const {
-  getTodayInScheduleZone,
-} = require("../schedule/schedule-time.util");
+const { getTodayInScheduleZone } = require("../schedule/schedule-time.util");
 const { isDeviceOnline } = require("../device/device-online.util");
 const {
   getHourlyConsumption,
@@ -109,9 +107,7 @@ async function getReportSummary({ roomId, deviceId, from, to }) {
         rangeEnd: g._max.recordedAt,
         startUsageKwh,
         endUsageKwh,
-        usageKwh: Number(
-          (consumptionByDevice.get(g.deviceId) || 0).toFixed(3),
-        ),
+        usageKwh: Number((consumptionByDevice.get(g.deviceId) || 0).toFixed(3)),
       };
     })
     .sort((a, b) => b.usageKwh - a.usageKwh);
@@ -306,21 +302,16 @@ async function getDashboardSummary() {
   const yesterdayStart = new Date(todayStart);
   yesterdayStart.setDate(yesterdayStart.getDate() - 1);
 
-  const [
-    totalDevices,
-    devices,
-    totalGateways,
-    onlineGateways,
-    consumption,
-  ] = await Promise.all([
-    prisma.device.count(),
-    prisma.device.findMany({
-      select: { lastSeenAt: true, intervalMinutes: true },
-    }),
-    prisma.gateway.count(),
-    prisma.gateway.count({ where: { status: "online" } }),
-    getHourlyConsumption({ start: yesterdayStart, end: todayEnd }),
-  ]);
+  const [totalDevices, devices, totalGateways, onlineGateways, consumption] =
+    await Promise.all([
+      prisma.device.count(),
+      prisma.device.findMany({
+        select: { lastSeenAt: true, intervalMinutes: true },
+      }),
+      prisma.gateway.count(),
+      prisma.gateway.count({ where: { status: "online" } }),
+      getHourlyConsumption({ start: yesterdayStart, end: todayEnd }),
+    ]);
 
   const devicesOnline = devices.filter((d) => isDeviceOnline(d, now)).length;
   const totalKwh = sumKwh(consumption.filter((row) => row.hour >= todayStart));
@@ -486,18 +477,14 @@ async function getActiveSchedules(status) {
 
   const where = { status: "active" };
   if (status === "upcoming") {
-    where.repeatType = "none";
     where.scheduledDate = { gt: todayStart };
   } else {
-    where.OR = [
-      { repeatType: { not: "none" } },
-      { scheduledDate: { lte: todayStart } },
-    ];
+    where.scheduledDate = { lte: todayStart };
   }
 
   const schedules = await prisma.schedule.findMany({
     where,
-    include: { room: true, device: true },
+    include: { room: { include: { _count: { select: { devices: true } } } } },
     orderBy: { scheduledDate: "asc" },
     take: 20,
   });
@@ -506,8 +493,7 @@ async function getActiveSchedules(status) {
     id: s.id,
     roomName: s.room.name,
     roomLocation: s.room.location,
-    component: s.device?.name || "All devices",
-    deviceEui: s.device?.eui || "-",
+    deviceCount: s.room._count.devices,
     startDate: s.scheduledDate,
     time: s.endTime ? `${s.startTime} - ${s.endTime}` : s.startTime,
     repeat: s.repeatType !== "none",
