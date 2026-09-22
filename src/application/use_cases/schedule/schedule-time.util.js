@@ -33,7 +33,9 @@ function invertAction(action) {
  */
 function toDateOnly(date) {
   const d = new Date(date);
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
 }
 
 /**
@@ -121,6 +123,28 @@ function getTodayInScheduleZone(now = new Date()) {
 }
 
 /**
+ * Nentuin tanggal mulai schedule kalo client nggak ngirim scheduledDate,
+ * dihitung di zona waktu schedule (SCHEDULE_TIMEZONE), bukan zona waktu
+ * browser/server.
+ * - berulang: mulai dari hari ini.
+ * - sekali jalan: kemunculan berikutnya jam startTime. Kalo startTime masih di
+ *   depan jam sekarang berarti hari ini, kalo sama atau udah lewat berarti
+ *   besok (menit yang lagi jalan udah diproses scheduler, jadi nggak bakal
+ *   kepicu).
+ *
+ * Dipake di: schedule.usecase.js → createSchedule, updateSchedule.
+ */
+function resolveScheduledDate(
+  { startTime, repeatType },
+  now = new Date(),
+  timeZone = config.schedule.timezone,
+) {
+  const { date, time } = getZonedParts(now, timeZone);
+  if (repeatType && repeatType !== "none") return date;
+  return startTime > time ? date : addDays(date, 1);
+}
+
+/**
  * Schedule dianggep nyebrang tengah malem kalo endTime ≤ startTime (misal
  * 23:00 → 01:00).
  *
@@ -129,6 +153,22 @@ function getTodayInScheduleZone(now = new Date()) {
 function isCrossMidnight(schedule) {
   if (!schedule.endTime) return false;
   return timeToMinutes(schedule.endTime) <= timeToMinutes(schedule.startTime);
+}
+
+/**
+ * Schedule sekali-jalan dianggep expired kalo hari terakhir dia mungkin masih
+ * bisa kepicu (scheduledDate, +1 hari kalo cross-midnight) udah kelewat hari
+ * ini. Dipake buat nyapu schedule yang kelewat catch-up scheduler (misal
+ * server mati pas jamnya) biar nggak nyangkut "active" selamanya.
+ *
+ * Dipake di: scheduleWorker.js → expireMissedSchedules.
+ */
+function isScheduleExpired(schedule, today) {
+  if (schedule.repeatType !== "none") return false;
+  const lastPossibleDay = isCrossMidnight(schedule)
+    ? addDays(toDateOnly(schedule.scheduledDate), 1)
+    : toDateOnly(schedule.scheduledDate);
+  return lastPossibleDay < today;
 }
 
 /**
@@ -291,4 +331,6 @@ module.exports = {
   timeRangesOverlap,
   isStartDue,
   isEndDue,
+  resolveScheduledDate,
+  isScheduleExpired,
 };

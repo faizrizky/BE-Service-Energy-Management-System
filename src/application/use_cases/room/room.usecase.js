@@ -440,9 +440,7 @@ async function listRoomsSummary(filter = {}) {
   });
 
   const roomDevices = rooms.flatMap((room) => room.devices);
-  const usageByDevice = await getUsage24hByDevice(
-    roomDevices.map((d) => d.id),
-  );
+  const usageByDevice = await getUsage24hByDevice(roomDevices.map((d) => d.id));
   const now = new Date();
 
   return Promise.all(
@@ -603,13 +601,19 @@ async function powerRoom(roomId, action, options = {}) {
   const results = [];
 
   for (const device of room.devices) {
-    results.push(await requestRelayCommand(device, action, options));
+    results.push(
+      await requestRelayCommand(device, action, {
+        ...options,
+        skipIfOffline: true,
+      }),
+    );
   }
 
   const summary = {
     total: results.length,
     pending: results.filter((r) => r.status === "pending").length,
     failed: results.filter((r) => r.status === "failed").length,
+    skipped: results.filter((r) => r.status === "skipped").length,
   };
 
   emitRoomPower(roomId, results);
@@ -666,6 +670,9 @@ function buildLogDescription(log) {
   }
   if (log.status === "gateway_offline") {
     return `Gateway offline, could not turn ${actionLabel}`;
+  }
+  if (log.status === "skipped") {
+    return `Skipped turning ${actionLabel}${log.notes ? `(${log.notes})` : ""}`;
   }
   return log.triggerType === "scheduled"
     ? `Scheduled: device turned ${actionLabel}`

@@ -8,6 +8,7 @@ const {
   getZonedParts,
   isStartDue,
   isEndDue,
+  isScheduleExpired,
 } = require("../../application/use_cases/schedule/schedule-time.util");
 
 const connection = {
@@ -77,7 +78,6 @@ async function processMinute(minuteDate) {
     },
     include: {
       room: { include: { devices: true } },
-      device: true,
     },
   });
 
@@ -99,12 +99,18 @@ async function processMinute(minuteDate) {
     const action = startTrigger
       ? schedule.action
       : invertAction(schedule.action);
-    const targets = schedule.device ? [schedule.device] : schedule.room.devices;
+    const targets = schedule.room.devices;
+
+    if (targets.length === 0)
+      logger.warn(
+        `[Scheduler] Schedule "${schedule.name}" (${schedule.id}): room "${schedule.room.name}" tidak memiliki device, tidak ada yang dieksekusi`,
+      );
 
     for (const device of targets) {
       try {
         await deviceUseCase.powerDevice(device.id, action, {
           scheduleId: schedule.id,
+          skipIfOffline: true,
         });
       } catch (err) {
         logger.warn(
@@ -133,6 +139,31 @@ async function processMinute(minuteDate) {
   }
 }
 
+async function expireMissedSchedules(now) {
+  const timeZone = config.schedule.timezone;
+  const today = getZonedParts(now, timeZone).date;
+
+  const candidates = await prisma.schedule.findMany({
+    where: { status: "active", repeatType: "none" },
+    select: { id: true, scheduledDate: true, startTime: true, endTime: true },
+  });
+
+  const expiredIds = candidates
+    .filter((s) => isScheduleExpired(s, today))
+    .map((s) => s.id);
+
+  if (expiredIds.length === 0) return;
+
+  await prisma.schedule.updateMany({
+    where: { id: { in: expiredIds } },
+    data: { status: "completed" },
+  });
+
+  logger.warn(
+    `[Scheduler] ${expiredIds.length} schedule expired tanpa sempat dieksekusi (kemungkinan server down/kelewat catch-up), ditandain "completed": ${expiredIds.join(", ")}`,
+  );
+}
+
 /**
  * Processor job scheduler: ngecek semua menit yang belom dicek, terus nyimpen
  * waktu cek terakhir (di memori).
@@ -146,6 +177,8 @@ async function executeDueSchedules() {
   for (const minute of minutesToCheck) {
     await processMinute(minute);
   }
+
+  await expireMissedSchedules(now);
 
   lastCheckedAt = now;
 }

@@ -461,9 +461,9 @@ async function deleteDevice(id) {
 }
 
 /**
- * Hapus device dari database EMS aja (nggak nyentuh ChirpStack): reading
- * energinya ikut dihapus, sedangkan riwayat perintah & schedule cuma dilepas
- * kaitannya biar catatannya nggak ilang.
+ * Riwayat perintah cuma dilepas kaitannya (bukan dihapus) biar catatannya
+ * nggak ilang. Schedule sekarang level room, jadi hapus device gak nyentuh
+ * tabel schedule sama sekali.
  *
  * Dipake di: deleteDevice, syncDevicesFromChirpstack (file ini).
  */
@@ -471,10 +471,6 @@ async function deleteDeviceLocally(id) {
   const deleted = await prisma.$transaction(async (tx) => {
     await tx.energyReading.deleteMany({ where: { deviceId: id } });
     await tx.commandLog.updateMany({
-      where: { deviceId: id },
-      data: { deviceId: null },
-    });
-    await tx.schedule.updateMany({
       where: { deviceId: id },
       data: { deviceId: null },
     });
@@ -712,7 +708,7 @@ async function updatePendingCommand(command, data, deviceName) {
  * - room.usecase.js → powerRoom.
  */
 async function requestRelayCommand(device, action, options = {}) {
-  const { userId = null, scheduleId = null } = options;
+  const { userId = null, scheduleId = null, skipIfOffline = false } = options;
   const base = {
     roomId: device.roomId,
     deviceId: device.id,
@@ -723,10 +719,24 @@ async function requestRelayCommand(device, action, options = {}) {
   };
 
   if (!isDeviceOnline(device)) {
-    throw httpError(
-      "Device sedang offline (belum ada laporan dari meter), perintah tidak dikirim",
-      409,
-    );
+    if (!skipIfOffline) {
+      throw httpError(
+        "Device sedang offline (belum ada laporan dari meter), perintah tidak dikirim",
+        409,
+      );
+    }
+
+    const skipped = await prisma.commandLog.create({
+      data: {
+        ...base,
+        status: "skipped",
+        notes:
+          "Device offline (belum ada laporan dari meter), perintah tidak dikirim",
+      },
+    });
+    const skippedEvent = toCommandEvent(skipped, device.name);
+    emitDeviceCommand(skippedEvent);
+    return skippedEvent;
   }
 
   if (!isDevEui(device.eui)) {

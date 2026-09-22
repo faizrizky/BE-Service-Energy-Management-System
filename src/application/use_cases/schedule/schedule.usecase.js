@@ -1,8 +1,10 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
   timeRangesOverlap,
   occurrenceDatesOverlap,
   getTodayInScheduleZone,
+  resolveScheduledDate,
 } = require("./schedule-time.util");
 
 const {
@@ -16,6 +18,11 @@ const SAFE_USER_SELECT = {
   fullName: true,
   username: true,
   email: true,
+};
+
+const SCHEDULE_INCLUDE = {
+  room: { include: { _count: { select: { devices: true } } } },
+  createdBy: { select: SAFE_USER_SELECT },
 };
 
 /**
@@ -33,23 +40,19 @@ function buildStatusWhere(status) {
   if (status === "upcoming") {
     return {
       status: "active",
-      repeatType: "none",
       scheduledDate: { gt: todayStart },
     };
   }
 
   return {
     status: "active",
-    OR: [
-      { repeatType: { not: "none" } },
-      { scheduledDate: { lte: todayStart } },
-    ],
+    scheduledDate: { lte: todayStart },
   };
 }
 
 /**
  * List schedule pake paginasi, bisa filter room, status, tanggal, sama search
- * (nama room/device, EUI, tipe device).
+ * (nama, deskripsi, atau nama room).
  *
  * Dipake di: schedule.controller.js → index (GET /api/schedules).
  */
@@ -84,10 +87,9 @@ async function listSchedulesPaginated(filter = {}) {
   if (search) {
     andConditions.push({
       OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
         { room: { name: { contains: search, mode: "insensitive" } } },
-        { device: { name: { contains: search, mode: "insensitive" } } },
-        { device: { eui: { contains: search, mode: "insensitive" } } },
-        { device: { deviceType: { contains: search, mode: "insensitive" } } },
       ],
     });
   }
@@ -98,11 +100,7 @@ async function listSchedulesPaginated(filter = {}) {
     prisma.schedule.count({ where }),
     prisma.schedule.findMany({
       where,
-      include: {
-        room: true,
-        device: true,
-        createdBy: { select: SAFE_USER_SELECT },
-      },
+      include: SCHEDULE_INCLUDE,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * rowsPerPage,
       take: rowsPerPage,
@@ -116,18 +114,6 @@ async function listSchedulesPaginated(filter = {}) {
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / rowsPerPage)),
   };
-}
-
-/**
- * Dua schedule dianggep satu cakupan kalo room-nya sama dan device-nya sama,
- * atau salah satunya berlaku buat satu room penuh.
- *
- * Dipake di: assertNoScheduleConflict (file ini).
- */
-function scopeOverlap(a, b) {
-  if (a.roomId !== b.roomId) return false;
-  if (!a.deviceId || !b.deviceId) return true;
-  return a.deviceId === b.deviceId;
 }
 
 /**
@@ -147,8 +133,6 @@ async function assertNoScheduleConflict(data, excludeId = null) {
   });
 
   const target = {
-    roomId: data.roomId,
-    deviceId: data.deviceId || null,
     scheduledDate: data.scheduledDate,
     startTime: data.startTime,
     endTime: data.endTime || null,
@@ -158,7 +142,6 @@ async function assertNoScheduleConflict(data, excludeId = null) {
 
   const conflict = candidates.find(
     (existing) =>
-      scopeOverlap(target, existing) &&
       occurrenceDatesOverlap(target, existing) &&
       timeRangesOverlap(
         target.startTime,
@@ -180,45 +163,82 @@ async function assertNoScheduleConflict(data, excludeId = null) {
 }
 
 /**
- * Detail schedule plus room, device, sama pembuatnya (tanpa data sensitif).
- * Balikin null kalo nggak ketemu.
+ * Validasi aturan schedule yang gak bisa dicek zod: mingguan wajib pilih
+ * minimal satu hari, dan endTime gak boleh sama persis dengan startTime.
+ * Lempar 400 kalo salah satu dilanggar.
+ *
+ * Dipake di: createSchedule, updateSchedule (file ini).
+ */
+function assertScheduleRules({ repeatType, repeatDays, startTime, endTime }) {
+  if (
+    repeatType === "weekly" &&
+    !(Array.isArray(repeatDays) && repeatDays.length > 0)
+  ) {
+    throw httpError("Jadwal mingguan wajib memilih minimal satu hari", 400);
+  }
+  if (endTime && endTime === startTime) {
+    throw httpError("endTime tidak boleh sama dengan startTime", 400);
+  }
+}
+
+/**
+ * Detail schedule plus room sama pembuatnya (tanpa data sensitif). Balikin
+ * null kalo nggak ketemu.
  *
  * Dipake di: schedule.controller.js → show (GET /api/schedules/:id).
  */
 async function getScheduleById(id) {
   return prisma.schedule.findUnique({
     where: { id },
-    include: {
-      room: true,
-      device: true,
-      createdBy: { select: SAFE_USER_SELECT },
-    },
+    include: SCHEDULE_INCLUDE,
   });
 }
 
 /**
- * Bikin schedule abis dicek nggak bentrok (deviceId/endTime kosong disimpen
- * null, repeatType default none), terus ngirim event schedule:created.
+ * Bikin schedule abis dicek nggak bentrok (endTime kosong disimpen null,
+ * repeatType default none, scheduledDate dihitung otomatis kalo nggak
+ * dikirim), terus ngirim event schedule:created.
  *
  * Dipake di: schedule.controller.js → store (POST /api/schedules).
  */
 async function createSchedule(data, userId) {
-  const scheduledDate = new Date(data.scheduledDate);
+  const repeatType = data.repeatType || "none";
+  const endTime = data.endTime || null;
 
-  await assertNoScheduleConflict({ ...data, scheduledDate });
+  assertScheduleRules({
+    repeatType,
+    repeatDays: data.repeatDays,
+    startTime: data.startTime,
+    endTime,
+  });
+
+  const scheduledDate = data.scheduledDate
+    ? new Date(data.scheduledDate)
+    : resolveScheduledDate({ startTime: data.startTime, repeatType });
+
+  await assertNoScheduleConflict({
+    roomId: data.roomId,
+    scheduledDate,
+    startTime: data.startTime,
+    endTime,
+    repeatType,
+    repeatDays: data.repeatDays,
+  });
 
   const schedule = await prisma.schedule.create({
     data: {
+      name: data.name,
+      description: data.description || null,
       roomId: data.roomId,
-      deviceId: data.deviceId || null,
       action: data.action,
       scheduledDate,
       startTime: data.startTime,
-      endTime: data.endTime || null,
-      repeatType: data.repeatType || "none",
+      endTime,
+      repeatType,
       repeatDays: data.repeatDays || undefined,
       createdById: userId,
     },
+    include: SCHEDULE_INCLUDE,
   });
   emitScheduleCreated(schedule);
   return schedule;
@@ -232,42 +252,61 @@ async function createSchedule(data, userId) {
  */
 async function updateSchedule(id, data) {
   const existing = await prisma.schedule.findUnique({ where: { id } });
-  if (!existing) {
-    const err = new Error("Schedule tidak ditemukan");
-    err.status = 404;
-    throw err;
+  if (!existing) throw httpError("Schedule tidak ditemukan", 404);
+
+  const repeatType = data.repeatType ?? existing.repeatType;
+  const startTime = data.startTime ?? existing.startTime;
+  const endTime =
+    data.endTime !== undefined ? data.endTime || null : existing.endTime;
+  const repeatDays =
+    data.repeatDays !== undefined ? data.repeatDays : existing.repeatDays;
+
+  assertScheduleRules({ repeatType, repeatDays, startTime, endTime });
+
+  let scheduledDate = data.scheduledDate
+    ? new Date(data.scheduledDate)
+    : existing.scheduledDate;
+
+  const timingChanged =
+    data.repeatType !== undefined || data.startTime !== undefined;
+
+  if (
+    !data.scheduledDate &&
+    timingChanged &&
+    repeatType === "none" &&
+    scheduledDate < getTodayInScheduleZone()
+  ) {
+    scheduledDate = resolveScheduledDate({ startTime, repeatType });
   }
 
-  const merged = {
-    roomId: data.roomId ?? existing.roomId,
-    deviceId: data.deviceId !== undefined ? data.deviceId : existing.deviceId,
-    scheduledDate: data.scheduledDate
-      ? new Date(data.scheduledDate)
-      : existing.scheduledDate,
-    startTime: data.startTime ?? existing.startTime,
-    endTime: data.endTime !== undefined ? data.endTime : existing.endTime,
-    repeatType: data.repeatType ?? existing.repeatType,
-    repeatDays:
-      data.repeatDays !== undefined ? data.repeatDays : existing.repeatDays,
-  };
-
-  await assertNoScheduleConflict(merged, id);
+  await assertNoScheduleConflict(
+    {
+      roomId: data.roomId ?? existing.roomId,
+      scheduledDate,
+      startTime,
+      endTime,
+      repeatType,
+      repeatDays,
+    },
+    id,
+  );
 
   const schedule = await prisma.schedule.update({
     where: { id },
     data: {
+      name: data.name,
+      description:
+        data.description === undefined ? undefined : data.description || null,
       roomId: data.roomId,
-      deviceId: data.deviceId,
       action: data.action,
-      scheduledDate: data.scheduledDate
-        ? new Date(data.scheduledDate)
-        : undefined,
+      scheduledDate,
       startTime: data.startTime,
-      endTime: data.endTime,
+      endTime: data.endTime === undefined ? undefined : data.endTime || null,
       repeatType: data.repeatType,
       repeatDays: data.repeatDays,
       status: data.status,
     },
+    include: SCHEDULE_INCLUDE,
   });
   emitScheduleUpdated(schedule);
   return schedule;
