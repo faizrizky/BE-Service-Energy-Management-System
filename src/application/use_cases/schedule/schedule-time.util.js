@@ -315,6 +315,21 @@ function isEndDue(schedule, now, timeZone = config.schedule.timezone) {
   return isOccurringOnDate(schedule, startReferenceDate);
 }
 
+/**
+ * Aksi schedule di awal & akhir: start = action-nya sendiri, end = kebalikan
+ * yang kepicu pas endTime (null kalo gak ada endTime). Aturannya sama persis
+ * sama yang dipake scheduleWorker pas eksekusi.
+ *
+ * Dipake di: schedule.usecase.js → withActivity, report.usecase.js →
+ *   getActiveSchedules.
+ */
+function getScheduleActivity(schedule) {
+  return {
+    start: schedule.action,
+    end: schedule.endTime ? invertAction(schedule.action) : null,
+  };
+}
+
 module.exports = {
   timeToMinutes,
   invertAction,
@@ -333,4 +348,5 @@ module.exports = {
   isEndDue,
   resolveScheduledDate,
   isScheduleExpired,
+  getScheduleActivity,
 };

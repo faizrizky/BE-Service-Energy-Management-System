@@ -5,7 +5,7 @@ const {
   occurrenceDatesOverlap,
   getTodayInScheduleZone,
   resolveScheduledDate,
-  invertAction,
+  getScheduleActivity,
   getZonedParts,
 } = require("./schedule-time.util");
 
@@ -56,23 +56,15 @@ function buildStatusWhere(status) {
 }
 
 /**
- * Tempelin ringkasan aksi schedule: start = action-nya sendiri, end = aksi
- * kebalikan yang kepicu pas endTime (null kalo gak ada endTime). Aturannya
- * sama persis sama yang dipake scheduleWorker pas eksekusi, diitung di sini
- * biar frontend tinggal nampilin tanpa nurunin aturannya sendiri.
+ * Tempelin ringkasan aksi schedule (lihat getScheduleActivity) biar frontend
+ * tinggal nampilin tanpa nurunin aturannya sendiri.
  *
  * Dipake di: listSchedulesPaginated, getScheduleById, createSchedule,
  *   updateSchedule (file ini).
  */
 function withActivity(schedule) {
   if (!schedule) return schedule;
-  return {
-    ...schedule,
-    activity: {
-      start: schedule.action,
-      end: schedule.endTime ? invertAction(schedule.action) : null,
-    },
-  };
+  return { ...schedule, activity: getScheduleActivity(schedule) };
 }
 
 /**
