@@ -2,8 +2,9 @@ const { z } = require("zod");
 
 const createRoomSchema = z.object({
   name: z.string().min(1, "name wajib diisi").max(120),
-  picName: z.string().max(120).optional().or(z.literal("")),
-  picPhone: z.string().max(30).optional().or(z.literal("")),
+  // picName: z.string().max(120).optional().or(z.literal("")),
+  // picPhone: z.string().max(30).optional().or(z.literal("")),
+  picUserId: z.string().max(255).optional().or(z.literal("")),
   location: z.string().max(255).optional().or(z.literal("")),
   description: z.string().max(500).optional().or(z.literal("")),
   imageUrl: z
