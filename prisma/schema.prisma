@@ -80,6 +80,7 @@ model Room {
   name        String
   picName     String?
   picPhone    String?
+  picUserId   String?
   location    String?
   description String?
   imageUrl    String?
