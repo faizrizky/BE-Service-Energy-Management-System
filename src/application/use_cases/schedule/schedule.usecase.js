@@ -5,6 +5,8 @@ const {
   occurrenceDatesOverlap,
   getTodayInScheduleZone,
   resolveScheduledDate,
+  invertAction,
+  getZonedParts,
 } = require("./schedule-time.util");
 
 const {
@@ -24,6 +26,9 @@ const SCHEDULE_INCLUDE = {
   room: { include: { _count: { select: { devices: true } } } },
   createdBy: { select: SAFE_USER_SELECT },
 };
+
+const RECENT_ACTIVITY_LIMIT = 5;
+const RECENT_ACTIVITY_SCAN = 50;
 
 /**
  * Bikin filter Prisma buat status active (berulang atau udah mulai) atau
@@ -48,6 +53,95 @@ function buildStatusWhere(status) {
     status: "active",
     scheduledDate: { lte: todayStart },
   };
+}
+
+/**
+ * Tempelin ringkasan aksi schedule: start = action-nya sendiri, end = aksi
+ * kebalikan yang kepicu pas endTime (null kalo gak ada endTime). Aturannya
+ * sama persis sama yang dipake scheduleWorker pas eksekusi, diitung di sini
+ * biar frontend tinggal nampilin tanpa nurunin aturannya sendiri.
+ *
+ * Dipake di: listSchedulesPaginated, getScheduleById, createSchedule,
+ *   updateSchedule (file ini).
+ */
+function withActivity(schedule) {
+  if (!schedule) return schedule;
+  return {
+    ...schedule,
+    activity: {
+      start: schedule.action,
+      end: schedule.endTime ? invertAction(schedule.action) : null,
+    },
+  };
+}
+
+/**
+ * Ringkas satu kali eksekusi schedule (semua perintah ke device di room pada
+ * menit yang sama) jadi satu status + label. Satu jadwal nembak semua device
+ * di room, jadi yang ditampilin per eksekusi, bukan per device.
+ *
+ * Dipake di: getRecentActivity (file ini).
+ */
+function summarizeExecution(logs) {
+  const total = logs.length;
+  const count = (status) => logs.filter((log) => log.status === status).length;
+  const success = count("success");
+
+  if (count("pending") > 0) {
+    return { status: "pending", label: "Waiting for meter confirmation" };
+  }
+  if (success === total) {
+    return { status: "executed", label: "Schedule executed" };
+  }
+  if (success > 0) {
+    return {
+      status: "partial",
+      label: `Executed on ${success}/${total} devices`,
+    };
+  }
+  if (count("skipped") === total) {
+    return { status: "skipped", label: "Skipped, device offline" };
+  }
+  return { status: "failed", label: "Failed to execute" };
+}
+
+/**
+ * Riwayat eksekusi terbaru satu schedule, dikelompokin per eksekusi (menit +
+ * aksi, di zona waktu schedule) biar jadwal yang nembak banyak device tetap
+ * keliatan sebagai satu kejadian. Terbaru duluan.
+ *
+ * Dipake di: getScheduleById (file ini).
+ */
+async function getRecentActivity(scheduleId) {
+  const logs = await prisma.commandLog.findMany({
+    where: { scheduleId },
+    orderBy: { executedAt: "desc" },
+    take: RECENT_ACTIVITY_SCAN,
+  });
+
+  const group = new Map();
+  for (const log of logs) {
+    const { dateKey, time } = getZonedParts(log.executedAt);
+    const key = `${dateKey} ${time} ${log.action}`;
+    if (!group.has(key)) {
+      group.set(key, {
+        key,
+        executedAt: log.executedAt,
+        date: dateKey,
+        time,
+        action: log.action,
+        logs: [],
+      });
+    }
+    group.get(key).logs.push(log);
+  }
+
+  return [...group.values()]
+    .slice(0, RECENT_ACTIVITY_LIMIT)
+    .map(({ logs: executionLogs, ...entry }) => ({
+      ...entry,
+      ...summarizeExecution(executionLogs),
+    }));
 }
 
 /**
@@ -108,7 +202,7 @@ async function listSchedulesPaginated(filter = {}) {
   ]);
 
   return {
-    data: schedules,
+    data: schedules.map(withActivity),
     page: Number(page),
     rowsPerPage: Number(rowsPerPage),
     totalRows,
@@ -182,16 +276,21 @@ function assertScheduleRules({ repeatType, repeatDays, startTime, endTime }) {
 }
 
 /**
- * Detail schedule plus room sama pembuatnya (tanpa data sensitif). Balikin
- * null kalo nggak ketemu.
+ * Detail schedule plus room, pembuatnya (tanpa data sensitif), dan riwayat
+ * eksekusi terbaru. Balikin null kalo nggak ketemu.
  *
  * Dipake di: schedule.controller.js → show (GET /api/schedules/:id).
  */
 async function getScheduleById(id) {
-  return prisma.schedule.findUnique({
-    where: { id },
-    include: SCHEDULE_INCLUDE,
-  });
+  const [schedule, recentActivity] = await Promise.all([
+    prisma.schedule.findUnique({
+      where: { id },
+      include: SCHEDULE_INCLUDE,
+    }),
+    getRecentActivity(id),
+  ]);
+  if (!schedule) return null;
+  return { ...withActivity(schedule), recentActivity };
 }
 
 /**
@@ -240,8 +339,9 @@ async function createSchedule(data, userId) {
     },
     include: SCHEDULE_INCLUDE,
   });
-  emitScheduleCreated(schedule);
-  return schedule;
+  const created = withActivity(schedule);
+  emitScheduleCreated(created);
+  return created;
 }
 
 /**
@@ -308,8 +408,9 @@ async function updateSchedule(id, data) {
     },
     include: SCHEDULE_INCLUDE,
   });
-  emitScheduleUpdated(schedule);
-  return schedule;
+  const updated = withActivity(schedule);
+  emitScheduleUpdated(updated);
+  return updated;
 }
 
 /**

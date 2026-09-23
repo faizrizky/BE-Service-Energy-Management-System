@@ -98,17 +98,148 @@ describe("listSchedulesPaginated", () => {
 });
 
 describe("getScheduleById", () => {
-  test("[positive/negative] ditemukan & null", async () => {
-    prisma.schedule.findUnique.mockResolvedValueOnce({ id: "s1" }).mockResolvedValueOnce(null);
-    await expect(scheduleUseCase.getScheduleById("s1")).resolves.toEqual({ id: "s1" });
+  beforeEach(() => {
+    prisma.commandLog.findMany.mockResolvedValue([]);
+  });
+
+  test("[positive] ditemukan -> relasi di-include, activity & recentActivity ditempel", async () => {
+    prisma.schedule.findUnique.mockResolvedValue({ id: "s1", action: "on", endTime: "17:00" });
+
+    await expect(scheduleUseCase.getScheduleById("s1")).resolves.toEqual({
+      id: "s1",
+      action: "on",
+      endTime: "17:00",
+      activity: { start: "on", end: "off" },
+      recentActivity: [],
+    });
+    expect(prisma.schedule.findUnique).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      include: SCHEDULE_INCLUDE,
+    });
+  });
+
+  test("[negative] tidak ditemukan -> null, bukan object activity kosong", async () => {
+    prisma.schedule.findUnique.mockResolvedValue(null);
     await expect(scheduleUseCase.getScheduleById("x")).resolves.toBeNull();
+  });
+});
+
+describe("getScheduleById - recentActivity (riwayat eksekusi)", () => {
+  // 09:20 UTC = 16:20 WIB (SCHEDULE_TIMEZONE default Asia/Jakarta)
+  const log = (overrides = {}) => ({
+    id: "l1",
+    action: "on",
+    status: "success",
+    executedAt: new Date("2026-09-22T09:20:10.000Z"),
+    ...overrides,
+  });
+
+  async function recentActivityFor(logs) {
+    prisma.schedule.findUnique.mockResolvedValue({ id: "s1", action: "on", endTime: null });
+    prisma.commandLog.findMany.mockResolvedValue(logs);
+    return (await scheduleUseCase.getScheduleById("s1")).recentActivity;
+  }
+
+  test("[positive] query log per schedule, terbaru duluan, dibatasi 50 baris", async () => {
+    await recentActivityFor([]);
+    expect(prisma.commandLog.findMany).toHaveBeenCalledWith({
+      where: { scheduleId: "s1" },
+      orderBy: { executedAt: "desc" },
+      take: 50,
+    });
+  });
+
+  test("[positive] tanggal & jam diitung di zona waktu schedule, bukan UTC", async () => {
+    const [entry] = await recentActivityFor([log()]);
+    expect(entry).toMatchObject({ date: "2026-09-22", time: "16:20", action: "on" });
+  });
+
+  test("[positive] beberapa device di menit yang sama -> satu entri eksekusi", async () => {
+    const entries = await recentActivityFor([
+      log({ id: "a" }),
+      log({ id: "b", executedAt: new Date("2026-09-22T09:20:40.000Z") }),
+      log({ id: "c", executedAt: new Date("2026-09-22T09:20:55.000Z") }),
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ status: "executed", label: "Schedule executed" });
+    expect(entries[0]).not.toHaveProperty("logs");
+  });
+
+  test.each([
+    [
+      "sebagian device gagal -> partial dengan hitungannya",
+      ["success", "success", "failed"],
+      { status: "partial", label: "Executed on 2/3 devices" },
+    ],
+    [
+      "ada yang masih pending -> pending, walau yang lain udah sukses",
+      ["success", "pending"],
+      { status: "pending", label: "Waiting for meter confirmation" },
+    ],
+    [
+      "semua di-skip (device offline) -> skipped",
+      ["skipped", "skipped"],
+      { status: "skipped", label: "Skipped, device offline" },
+    ],
+    [
+      "nggak ada yang sukses, campuran gagal & skip -> failed",
+      ["failed", "skipped"],
+      { status: "failed", label: "Failed to execute" },
+    ],
+  ])("[negative] %s", async (_, statuses, expected) => {
+    const entries = await recentActivityFor(
+      statuses.map((status, i) => log({ id: `l${i}`, status })),
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject(expected);
+  });
+
+  test("[positive] aksi on & off di menit berbeda -> entri terpisah, urutan terbaru duluan", async () => {
+    const entries = await recentActivityFor([
+      log({ id: "off", action: "off", status: "skipped", executedAt: new Date("2026-09-22T09:25:10.000Z") }),
+      log({ id: "on", action: "on", status: "failed", executedAt: new Date("2026-09-22T09:20:10.000Z") }),
+    ]);
+    expect(entries.map((e) => `${e.time} ${e.action} ${e.status}`)).toEqual([
+      "16:25 off skipped",
+      "16:20 on failed",
+    ]);
+  });
+
+  test("[positive] lebih dari 5 eksekusi -> cuma 5 terbaru yang dibalikin", async () => {
+    const logs = Array.from({ length: 7 }, (_, day) =>
+      log({ id: `d${day}`, executedAt: new Date(Date.UTC(2026, 8, 22 - day, 9, 20)) }),
+    );
+    const entries = await recentActivityFor(logs);
+    expect(entries.map((e) => e.date)).toEqual([
+      "2026-09-22",
+      "2026-09-21",
+      "2026-09-20",
+      "2026-09-19",
+      "2026-09-18",
+    ]);
+  });
+});
+
+describe("activity (aturan negasi endTime)", () => {
+  beforeEach(() => {
+    prisma.commandLog.findMany.mockResolvedValue([]);
+  });
+
+  test.each([
+    ["ada endTime, action on -> end off", "on", "17:00", { start: "on", end: "off" }],
+    ["ada endTime, action off -> end on", "off", "17:00", { start: "off", end: "on" }],
+    ["tanpa endTime -> end null", "on", null, { start: "on", end: null }],
+  ])("[positive] %s", async (_, action, endTime, expected) => {
+    prisma.schedule.findUnique.mockResolvedValue({ id: "s1", action, endTime });
+    const result = await scheduleUseCase.getScheduleById("s1");
+    expect(result.activity).toEqual(expected);
   });
 });
 
 describe("createSchedule", () => {
   test("[positive] tanpa bentrok -> dibuat dengan default & event dikirim", async () => {
     prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.create.mockResolvedValue({ id: "new" });
+    prisma.schedule.create.mockResolvedValue({ id: "new", action: "on", endTime: null });
 
     await scheduleUseCase.createSchedule(input({ description: "", endTime: "" }), "user-1");
 
@@ -128,7 +259,13 @@ describe("createSchedule", () => {
       },
       include: SCHEDULE_INCLUDE,
     });
-    expect(events.emitScheduleCreated).toHaveBeenCalledWith({ id: "new" });
+    // event bawa objek yang udah ditempelin activity, bukan row mentah
+    expect(events.emitScheduleCreated).toHaveBeenCalledWith({
+      id: "new",
+      action: "on",
+      endTime: null,
+      activity: { start: "on", end: null },
+    });
   });
 
   test("[positive] scheduledDate tidak dikirim -> dihitung otomatis dari startTime (bukan tanggal harfiah 'undefined')", async () => {
@@ -189,9 +326,14 @@ describe("createSchedule", () => {
     ["weekly di hari lain", existing({ repeatType: "weekly", repeatDays: [1], scheduledDate: new Date("2026-09-01") })],
   ])("[positive] tidak bentrok: %s", async (_, other) => {
     prisma.schedule.findMany.mockResolvedValue([other]);
-    prisma.schedule.create.mockResolvedValue({ id: "ok" });
+    prisma.schedule.create.mockResolvedValue({ id: "ok", action: "on", endTime: "12:00" });
     // 2026-09-20 adalah hari Minggu (0)
-    await expect(scheduleUseCase.createSchedule(input(), "u1")).resolves.toEqual({ id: "ok" });
+    await expect(scheduleUseCase.createSchedule(input(), "u1")).resolves.toEqual({
+      id: "ok",
+      action: "on",
+      endTime: "12:00",
+      activity: { start: "on", end: "off" },
+    });
   });
 });
 
@@ -204,7 +346,7 @@ describe("updateSchedule", () => {
   test("[positive] data lama digabung dengan data baru untuk cek bentrok & diri sendiri dikecualikan", async () => {
     prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1" }));
     prisma.schedule.findMany.mockResolvedValue([]);
-    prisma.schedule.update.mockResolvedValue({ id: "s1" });
+    prisma.schedule.update.mockResolvedValue({ id: "s1", action: "on", endTime: "15:00" });
 
     await scheduleUseCase.updateSchedule("s1", { startTime: "14:00", endTime: "15:00", status: "completed" });
 
@@ -216,7 +358,12 @@ describe("updateSchedule", () => {
       data: expect.objectContaining({ startTime: "14:00", endTime: "15:00", status: "completed" }),
       include: SCHEDULE_INCLUDE,
     });
-    expect(events.emitScheduleUpdated).toHaveBeenCalledWith({ id: "s1" });
+    expect(events.emitScheduleUpdated).toHaveBeenCalledWith({
+      id: "s1",
+      action: "on",
+      endTime: "15:00",
+      activity: { start: "on", end: "off" },
+    });
   });
 
   test("[negative] perubahan jam membuat bentrok baru -> 409 tanpa update", async () => {
