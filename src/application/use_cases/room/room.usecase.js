@@ -524,6 +524,7 @@ async function createRoom(data) {
       name: data.name,
       picName: data.picName,
       picPhone: data.picPhone,
+      picUserId: data.picUserId,
       location: data.location,
       description: data.description,
       imageUrl: data.imageUrl,
