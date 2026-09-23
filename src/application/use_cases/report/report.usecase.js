@@ -1,6 +1,9 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
-const { getTodayInScheduleZone } = require("../schedule/schedule-time.util");
+const {
+  getTodayInScheduleZone,
+  getScheduleActivity,
+} = require("../schedule/schedule-time.util");
 const { isDeviceOnline } = require("../device/device-online.util");
 const {
   getHourlyConsumption,
@@ -497,6 +500,7 @@ async function getActiveSchedules(status) {
     startDate: s.scheduledDate,
     time: s.endTime ? `${s.startTime} - ${s.endTime}` : s.startTime,
     repeat: s.repeatType !== "none",
+    activity: getScheduleActivity(s),
   }));
 }
 
