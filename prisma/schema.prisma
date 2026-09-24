@@ -215,3 +215,15 @@ model SecurityEvent {
   @@index([type, createdAt])
   @@map("security_events")
 }
+
+model Notification {
+   id          String       @id @default(uuid())
+   data        Json?         
+   readAt      Boolean      @default(false)
+   eventType   String
+   createdAt   DateTime     @default(now())
+   updatedAt   DateTime     @updatedAt
+
+   @@map("notification")
+   @@index([readAt])
+ }
