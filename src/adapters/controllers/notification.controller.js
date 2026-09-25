@@ -1,12 +1,27 @@
+const notificationCreateUseCase = require("../../application/use_cases/notification/create.usecase");
+const findAllNotifications = require("../../application/use_cases/notification/findAll.usecase");
 /**
  * 
  * Blueprint Index
  *
 */
-async function index(req, res) {
-  res.json({
-    "messages": "index"
-  });
+async function index(req, res, next) {
+  try {
+    const {
+      page = 1,
+      rowsPerPage = 10,
+      search,
+    } = req.query;
+    const notif = await findAllNotifications.findAllNotifications({
+      page,
+      // rowsPerPage: Number(rowsPerPage),
+      // search
+    });
+    res.json({ data: notif?.data});
+    // res.json({ data: result });
+  } catch (err) {
+      next(err);
+  }
 }
 
 /**
@@ -16,7 +31,7 @@ async function index(req, res) {
 */
 async function show(req, res, next) {
   res.json({
-    "messages": "show"
+    "messages": "index"
   });
 }
 
@@ -26,9 +41,12 @@ async function show(req, res, next) {
  *
 */
 async function store(req, res, next) {
-  res.json({
-    "messages": "store"
-  });
+  try {
+    const notif = await notificationCreateUseCase.createNotification(req.body);
+    res.status(201).json({ data: notif });
+  } catch (err) {
+      next(err);
+  }
 }
 
 /**
