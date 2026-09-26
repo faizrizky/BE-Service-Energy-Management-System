@@ -151,4 +151,13 @@ module.exports = {
    * - Frontend: halaman Schedule & Dashboard.
    */
   emitScheduleDeleted: (scheduleId) => emit("schedule:deleted", { scheduleId }),
+
+  /**
+   * Event notif:created abis notification dibikin.
+   *
+   * Dipake di:
+   * - create.usecase.js → createNotification
+   * - Frontend: halaman Notification.
+   */
+  emitNotificationCreated: (notif) => emit("notif:created", { notif }),
 };

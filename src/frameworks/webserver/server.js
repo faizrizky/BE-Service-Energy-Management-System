@@ -17,6 +17,7 @@ const roomRoutes = require("./routes/room.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
 const reportRoutes = require("./routes/report.routes");
+const notificationRoutes = require("./routes/notification.route")
 
 /**
  * Ngalihin request HTTP ke HTTPS (301) kalo FORCE_HTTPS=true, pake header
@@ -73,6 +74,7 @@ function createServer() {
 
   app.get("/health", healthCheck);
 
+  app.use("/api/notifications", notificationRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/users", userRoutes);
   app.use("/api/roles", roleRoutes);
