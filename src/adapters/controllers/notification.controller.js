@@ -1,5 +1,5 @@
 const notificationCreateUseCase = require("../../application/use_cases/notification/create.usecase");
-const findAllNotifications = require("../../application/use_cases/notification/findAll.usecase");
+const findAllNotifications = require("../../application/use_cases/notification/find.usecase");
 /**
  * 
  * Blueprint Index
@@ -11,14 +11,10 @@ async function index(req, res, next) {
       page = 1,
       rowsPerPage = 10,
       search,
+      orderBy,
     } = req.query;
-    const notif = await findAllNotifications.findAllNotifications({
-      page,
-      // rowsPerPage: Number(rowsPerPage),
-      // search
-    });
-    res.json({ data: notif?.data});
-    // res.json({ data: result });
+    const notif = await findAllNotifications.findNotification(Number(page), Number(rowsPerPage), search, orderBy);
+    res.json({ data: notif});
   } catch (err) {
       next(err);
   }
@@ -71,4 +67,6 @@ async function destroy(req, res, next) {
   });
 }
 
-module.exports = { index, show, store, update, destroy };
+module.exports = { 
+  index, 
+  show, store, update, destroy };
