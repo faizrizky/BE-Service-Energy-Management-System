@@ -1,4 +1,5 @@
 const roomUseCase = require("../../application/use_cases/room/room.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list room pake paginasi: status power, device online/offline,
@@ -167,6 +168,14 @@ async function stats(req, res, next) {
 async function store(req, res, next) {
   try {
     const room = await roomUseCase.createRoom(req.body);
+
+    await createNotification({
+      data: room,
+      eventType: "success",
+      message: `Room "${room.name}" has been Created`,
+      readAt: "false"
+    })
+
     res.status(201).json({ data: room });
   } catch (err) {
     next(err);
