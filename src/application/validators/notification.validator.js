@@ -2,7 +2,7 @@ const { z } = require("zod");
 
 const createNotificationSchema = z.object({
   data: z.union([ z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown())), ]),
-  eventType: z.enum(["success", "SUCCESS", "warning", "WARNING"]).optional().or(z.literal("")),
+  eventType: z.enum(["success", "SUCCESS", "warning", "WARNING", "error", "ERROR"]).optional().or(z.literal("")),
   message: z.string().max(255).optional().or(z.literal("")),
   readAt: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
 });
