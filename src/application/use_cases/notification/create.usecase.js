@@ -10,15 +10,16 @@ emitNotificationCreated
  * Dipake di: notification.controller.js → store (POST /api/notifications).
  */
 async function createNotification(data) {
-  const room = await prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: {
       eventType: data?.eventType,
       data: data?.data,
-      readAt: data?.readAt
+      readAt: data?.readAt,
+      message: data?.message
     },
   });
-  emitNotificationCreated(room);
-  return room;
+  emitNotificationCreated(notification);
+  return notification;
 }
 
 module.exports = {
