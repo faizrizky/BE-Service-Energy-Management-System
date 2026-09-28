@@ -1,4 +1,5 @@
 const userUseCase = require("../../application/use_cases/user/user.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list user pake paginasi, bisa filter role, search, sama tanggal.
@@ -61,6 +62,14 @@ async function show(req, res, next) {
 async function store(req, res, next) {
   try {
     const user = await userUseCase.createUser(req.body);
+
+    await createNotification({
+      data: user,
+      eventType: "success",
+      message: `User "${user.fullname}" has been Created`,
+      readAt: "false"
+    })
+
     res.status(201).json({ data: user });
   } catch (err) {
     next(err);
