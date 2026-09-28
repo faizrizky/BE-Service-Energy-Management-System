@@ -1,4 +1,5 @@
 const deviceUseCase = require("../../application/use_cases/device/device.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list device pake paginasi, bisa difilter search, room, gateway, sama
@@ -79,6 +80,14 @@ async function store(req, res, next) {
 async function update(req, res, next) {
   try {
     const device = await deviceUseCase.updateDevice(req.params.id, req.body);
+
+    await createNotification({
+      data: device,
+      eventType: "success",
+      message: `Device "${device.name}" has been Updated`,
+      readAt: "false"
+    })
+
     res.json({ data: device });
   } catch (err) {
     next(err);

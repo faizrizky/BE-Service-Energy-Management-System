@@ -1,4 +1,5 @@
 const scheduleUseCase = require("../../application/use_cases/schedule/schedule.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list schedule pake paginasi, bisa filter room, status
@@ -67,6 +68,14 @@ async function store(req, res, next) {
       req.body,
       req.user.id,
     );
+
+    await createNotification({
+      data: schedule,
+      eventType: "success",
+      message: `Schedule "${schedule.name}" has been Created`,
+      readAt: "false"
+    })
+
     res.status(201).json({ data: schedule });
   } catch (err) {
     next(err);
