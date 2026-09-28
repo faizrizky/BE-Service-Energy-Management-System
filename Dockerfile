@@ -24,6 +24,7 @@ FROM node:20-alpine AS production
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV ALLOWED_ORIGINS=http://ems.10.70.0.45.nip.io,http://10.70.0.32:6004,http://localhost:3000
 
 # tini untuk forwarding SIGTERM/SIGINT
 RUN apk add --no-cache openssl tini
