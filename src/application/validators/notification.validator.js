@@ -15,4 +15,8 @@ const findNotificationSchema = z.object({
   readAt: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
 });
 
-module.exports = { createNotificationSchema, findNotificationSchema };
+const patchReadAtNotification = z.object({
+  readAt: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+});
+
+module.exports = { createNotificationSchema, findNotificationSchema, patchReadAtNotification };

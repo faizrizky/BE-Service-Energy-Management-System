@@ -160,4 +160,13 @@ module.exports = {
    * - Frontend: halaman Notification.
    */
   emitNotificationCreated: (notif) => emit("notif:created", { notif }),
+
+    /**
+   * Event notif:updated abis notification diupdate.
+   *
+   * Dipake di:
+   * - patch.usecase.js → patchReadAtNotification
+   * - Frontend: halaman Notification.
+   */
+  emitNotificationPatch: (notif) => emit("notif:updated", { notif }),
 };
