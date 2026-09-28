@@ -14,7 +14,7 @@ async function index(req, res, next) {
       page, rowsPerPage, search, orderBy, readAt
     );    
 
-    res.json(notif);
+    res.json({data: notif});
   } catch (err) {
     next(err);
   }
