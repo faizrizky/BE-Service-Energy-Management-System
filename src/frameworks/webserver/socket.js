@@ -30,7 +30,7 @@ function initSocket(httpServer) {
   });
 
   io.use((socket, next) => {
-    const token = socket.handshake.auth?.token;
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.access_token;
     if (!token) return next(new Error("Token tidak ditemukan"));
 
     try {
