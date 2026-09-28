@@ -1,4 +1,5 @@
 const gatewayUseCase = require("../../application/use_cases/gateway/gateway.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list gateway pake paginasi, search & filter tanggal. Status
@@ -78,6 +79,14 @@ async function store(req, res, next) {
 async function update(req, res, next) {
   try {
     const gateway = await gatewayUseCase.updateGateway(req.params.id, req.body);
+
+    await createNotification({
+      data: gateway,
+      eventType: "success",
+      message: `Gateway "${gateway.name}" has been Updated`,
+      readAt: "false"
+    })
+
     res.json({ data: gateway });
   } catch (err) {
     next(err);
