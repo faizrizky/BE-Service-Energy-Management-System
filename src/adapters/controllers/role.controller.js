@@ -1,4 +1,5 @@
 const roleUseCase = require("../../application/use_cases/role/role.usecase");
+const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
  * Handler list role pake paginasi, plus permission & jumlah user-nya.
@@ -49,6 +50,14 @@ async function show(req, res, next) {
 async function store(req, res, next) {
   try {
     const role = await roleUseCase.createRole(req.body);
+
+    await createNotification({
+      data: role,
+      eventType: "success",
+      message: `Role "${role.name}" has been Created`,
+      readAt: "false"
+    })
+
     res.status(201).json({ data: role });
   } catch (err) {
     next(err);
