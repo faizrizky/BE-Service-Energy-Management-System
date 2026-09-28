@@ -1,4 +1,5 @@
 const notificationCreateUseCase = require("../../application/use_cases/notification/create.usecase");
+const notificationPatchUseCase = require("../../application/use_cases/notification/patch.usecase");
 const findAllNotifications = require("../../application/use_cases/notification/find.usecase");
 /**
  * 
@@ -46,12 +47,26 @@ async function store(req, res, next) {
 
 /**
  * 
+ * Blueprint Patch
+ *
+*/
+async function patch(req, res, next) {
+  try {
+    const notif = await notificationPatchUseCase.patchReadAtNotification(req.params.id, req.body);
+    res.status(200).json({ data: notif });
+  } catch (err) {
+      next(err);
+  }
+}
+
+/**
+ * 
  * Blueprint Update
  *
 */
 async function update(req, res, next) {
   res.json({
-    "messages": "store"
+    "messages": "update"
   });
 }
 
@@ -66,6 +81,4 @@ async function destroy(req, res, next) {
   });
 }
 
-module.exports = { 
-  index, 
-  show, store, update, destroy };
+module.exports = { index, show, store, patch, update, destroy };
