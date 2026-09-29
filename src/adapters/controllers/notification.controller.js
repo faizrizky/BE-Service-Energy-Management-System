@@ -1,3 +1,4 @@
+const notificationPatchMultiple = require("../../application/use_cases/notification/multiple.patch.usecase")
 const notificationCreateUseCase = require("../../application/use_cases/notification/create.usecase");
 const notificationPatchUseCase = require("../../application/use_cases/notification/patch.usecase");
 const findAllNotifications = require("../../application/use_cases/notification/find.usecase");
@@ -50,6 +51,20 @@ async function store(req, res, next) {
  * Blueprint Patch
  *
 */
+async function patchMultipleReadAt(req, res, next) {
+  try {
+    const notif = await notificationPatchMultiple.patchReadAtNotification(req.body);
+    res.status(200).json({ data: notif });
+  } catch (err) {
+      next(err);
+  }
+}
+
+/**
+ * 
+ * Blueprint Patch
+ *
+*/
 async function patch(req, res, next) {
   try {
     const notif = await notificationPatchUseCase.patchReadAtNotification(req.params.id, req.body);
@@ -81,4 +96,4 @@ async function destroy(req, res, next) {
   });
 }
 
-module.exports = { index, show, store, patch, update, destroy };
+module.exports = { index, show, store, patch, patchMultipleReadAt, update, destroy };

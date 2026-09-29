@@ -14,6 +14,7 @@ const authMiddleware = require("../middlewares/authMiddleware");
 
 router.use(authMiddleware);
 router.get("/", validate(findNotificationSchema, "query"), controller.index);
+router.patch("/reads", validate(patchReadAtNotification), controller.patchMultipleReadAt)
 router.get("/:id", controller.show);
 router.patch("/:id", validate(patchReadAtNotification), controller.patch)
 router.put("/:id", controller.update);
