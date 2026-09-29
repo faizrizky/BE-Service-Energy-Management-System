@@ -280,6 +280,7 @@ describe("getActiveSchedules", () => {
   const schedule = {
     id: "s1",
     room: { name: "Server", location: "Lt 1", _count: { devices: 3 } },
+    action: "on",
     scheduledDate: new Date("2026-09-14"),
     startTime: "08:00",
     endTime: "17:00",
@@ -300,6 +301,7 @@ describe("getActiveSchedules", () => {
       deviceCount: 3,
       time: "08:00 - 17:00",
       repeat: true,
+      activity: { start: "on", end: "off" },
     });
   });
 
@@ -310,7 +312,11 @@ describe("getActiveSchedules", () => {
     const [row] = await report.getActiveSchedules("upcoming");
     const { where } = prisma.schedule.findMany.mock.calls[0][0];
     expect(where).toEqual({ status: "active", scheduledDate: { gt: expect.any(Date) } });
-    expect(row).toMatchObject({ time: "08:00", repeat: false });
+    expect(row).toMatchObject({
+      time: "08:00",
+      repeat: false,
+      activity: { start: "on", end: null },
+    });
   });
 
   test("[negative] status tidak dikenal diperlakukan sebagai 'active'", async () => {

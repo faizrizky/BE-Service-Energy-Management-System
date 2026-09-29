@@ -16,7 +16,19 @@ const {
   getTodayInScheduleZone,
   resolveScheduledDate,
   isScheduleExpired,
+  getScheduleActivity,
 } = require("../../../../src/application/use_cases/schedule/schedule-time.util");
+
+describe("getScheduleActivity", () => {
+  test.each([
+    ["on + endTime -> end off", { action: "on", endTime: "17:00" }, { start: "on", end: "off" }],
+    ["off + endTime -> end on", { action: "off", endTime: "17:00" }, { start: "off", end: "on" }],
+    ["tanpa endTime (null) -> end null", { action: "on", endTime: null }, { start: "on", end: null }],
+    ["endTime string kosong dianggap gak ada", { action: "off", endTime: "" }, { start: "off", end: null }],
+  ])("[positive] %s", (_, schedule, expected) => {
+    expect(getScheduleActivity(schedule)).toEqual(expected);
+  });
+});
 
 describe("timeToMinutes", () => {
   test("konversi waktu normal ke menit", () => {
