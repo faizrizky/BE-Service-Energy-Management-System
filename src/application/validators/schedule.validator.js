@@ -12,7 +12,7 @@ const deviceIdMustBeEmpty = z
 
 const scheduleShape = {
   name: z.string().trim().min(1, "name wajib diisi").max(50),
-  description: z.string().trim().max(255).optional().nullable(),
+  description: z.string().trim().max(100).optional().nullable(),
   roomId: z.string().uuid("roomId tidak valid"),
   deviceId: deviceIdMustBeEmpty,
   action: z.enum(["on", "off"]),

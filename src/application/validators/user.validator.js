@@ -18,7 +18,7 @@ const createUserSchema = z.object({
     .regex(phoneRegex, "format nomor telepon tidak valid")
     .optional()
     .or(z.literal("")),
-  address: z.string().max(255).optional().or(z.literal("")),
+  address: z.string().max(100).optional().or(z.literal("")),
   roleId: z.string().uuid("Roleid tidak valid"),
   password: z.string().min(6, "Password minimal 6 karakter").max(50).optional(),
 });
