@@ -7,7 +7,7 @@ const createDeviceSchema = z.object({
       /^[0-9a-fA-F]{16}$/,
       "eui harus devEUI ChirpStack (16 karakter hex)",
     ),
-  name: z.string().min(1, "name wajib diisi").max(120),
+  name: z.string().min(1, "name wajib diisi").max(50),
   deviceType: z.string().max(50).optional().or(z.literal("")),
   intervalMinutes: z.coerce
     .number()

@@ -3,7 +3,7 @@ const { z } = require("zod");
 const phoneRegex = /^[0-9+\-\s()]{6,20}$/;
 
 const createUserSchema = z.object({
-  fullName: z.string().min(1, "Fullname wajib diisi").max(120),
+  fullName: z.string().min(1, "Fullname wajib diisi").max(50),
   username: z
     .string()
     .min(3, "Username minimal 3 karakter")
@@ -20,11 +20,7 @@ const createUserSchema = z.object({
     .or(z.literal("")),
   address: z.string().max(255).optional().or(z.literal("")),
   roleId: z.string().uuid("Roleid tidak valid"),
-  password: z
-    .string()
-    .min(6, "Password minimal 6 karakter")
-    .max(100)
-    .optional(),
+  password: z.string().min(6, "Password minimal 6 karakter").max(50).optional(),
 });
 
 const updateUserSchema = createUserSchema.partial();

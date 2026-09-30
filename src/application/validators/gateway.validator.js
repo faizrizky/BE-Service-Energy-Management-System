@@ -1,12 +1,12 @@
 const { z } = require("zod");
 
 const createGatewaySchema = z.object({
-  eui: z.string().min(1, "eui wajib diisi").max(100),
-  name: z.string().min(1, "Name gateway wajib diisi").max(120),
-  description: z.string().max(500).optional().or(z.literal("")),
+  eui: z.string().min(1, "eui wajib diisi").max(16),
+  name: z.string().min(1, "Name gateway wajib diisi").max(50),
+  description: z.string().max(255).optional().or(z.literal("")),
   simcard: z.string().max(50).optional().or(z.literal("")),
   powerSource: z.string().max(50).optional().or(z.literal("")),
-  modelUnit: z.string().max(100).optional().or(z.literal("")),
+  modelUnit: z.string().max(50).optional().or(z.literal("")),
   installationDate: z
     .string()
     .datetime({ offset: true })
