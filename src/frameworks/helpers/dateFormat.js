@@ -14,5 +14,43 @@ function formatDateTime(date) {
     timeStyle: "short",
   });
 }
+/**
+ * Pecah tanggal jadi bagian-bagian (tahun, bulan, hari, jam, menit) di zona
+ * waktu aplikasi.
+ *
+ * Dipake di: formatDateKey, formatTimeHm (file ini).
+ */
+function zonedParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: config.schedule.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(date));
+  return Object.fromEntries(parts.map((p) => [p.type, p.value]));
+}
 
-module.exports = { formatDateTime };
+/**
+ * Tanggal YYYY-MM-DD di zona waktu aplikasi.
+ *
+ * Dipake di: room.usecase.js → getDeviceLogs.
+ */
+function formatDateKey(date) {
+  const p = zonedParts(date);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/**
+ * Jam HH:mm di zona waktu aplikasi.
+ *
+ * Dipake di: room.usecase.js → getDeviceLogs.
+ */
+function formatTimeHm(date) {
+  const p = zonedParts(date);
+  return `${p.hour}:${p.minute}`;
+}
+
+module.exports = { formatDateTime, formatDateKey, formatTimeHm };

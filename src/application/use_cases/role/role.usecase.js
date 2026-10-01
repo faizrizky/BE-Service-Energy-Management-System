@@ -1,5 +1,6 @@
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 
 /**
  * List role pake paginasi (urut nama) dan search nama, plus permission &
@@ -8,6 +9,7 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
  * Dipake di: role.controller.js → index (GET /api/roles).
  */
 async function listRolesPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
+  search = escapeLike(search);
   const where = search
     ? {
         OR: [{ name: { contains: search, mode: "insensitive" } }],

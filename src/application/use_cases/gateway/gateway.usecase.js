@@ -1,4 +1,5 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 const {
   emitGatewayCreated,
   emitGatewayUpdated,
@@ -174,6 +175,7 @@ async function listGatewaysPaginated({
   createdFrom,
   createdTo,
 } = {}) {
+  search = escapeLike(search);
   const andConditions = [];
 
   if (search) {

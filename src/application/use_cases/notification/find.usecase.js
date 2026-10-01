@@ -1,4 +1,5 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 
 async function findNotification(
     page = 1,
@@ -7,6 +8,7 @@ async function findNotification(
     orderBy,
     readAt
 ) {
+    search = escapeLike(search);
     const skip = (page - 1) * rowsPerPage;
 
     const where = {

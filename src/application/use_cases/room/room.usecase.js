@@ -1,8 +1,13 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 const {
   requestRelayCommand,
   getPendingCommandsByDevice,
 } = require("../device/device.usecase");
+const {
+  formatDateKey,
+  formatTimeHm,
+} = require("../../../frameworks/helpers/dateFormat");
 
 /**
  * Progres resync yang paling duluan kelar buat sekumpulan device di satu room.
@@ -87,6 +92,7 @@ async function listRoomsPaginated({
   createdFrom,
   createdTo,
 } = {}) {
+  search = escapeLike(search);
   const andConditions = [];
 
   if (search) {
@@ -247,6 +253,7 @@ async function getRoomById(
   id,
   { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
 ) {
+  search = escapeLike(search);
   const andConditions = [];
   const room = await prisma.room.findUnique({ where: { id } });
   if (!room) return null;
@@ -333,6 +340,7 @@ async function listDevicesInRoom(
   roomId,
   { page = 1, rowsPerPage = 10, search, createdFrom, createdTo } = {},
 ) {
+  search = escapeLike(search);
   const andConditions = [{ roomId }];
 
   if (search) {
@@ -703,8 +711,8 @@ async function getDeviceLogs(roomId, deviceId) {
 
   return logs.map((log) => ({
     id: log.id,
-    date: toDateStr(log.executedAt),
-    time: toTimeStr(log.executedAt),
+    date: formatDateKey(log.executedAt),
+    time: formatTimeHm(log.executedAt),
     description: buildLogDescription(log),
     picName:
       log.triggerType === "scheduled"

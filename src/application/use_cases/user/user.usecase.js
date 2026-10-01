@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
   revokeSession,
@@ -35,6 +36,7 @@ async function listUsersPaginated({
   createdFrom,
   createdTo,
 } = {}) {
+  search = escapeLike(search);
   const andConditions = [];
 
   if (roleId) {

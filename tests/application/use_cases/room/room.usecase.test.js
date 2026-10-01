@@ -536,6 +536,15 @@ describe("getDeviceLogs", () => {
     await expect(roomUseCase.getDeviceLogs("r1", "d1")).rejects.toMatchObject({ status: 404 });
   });
 
+  test("[positive] tanggal & jam log pakai WIB (zona aplikasi), bukan zona server", async () => {
+    prisma.device.findUnique.mockResolvedValue(device());
+    prisma.commandLog.findMany.mockResolvedValue([
+      { id: "1", action: "on", status: "success", triggerType: "scheduled", executedAt: new Date("2026-09-30T18:30:00Z") },
+    ]);
+    const [log] = await roomUseCase.getDeviceLogs("r1", "d1");
+    expect(log).toMatchObject({ date: "2026-10-01", time: "01:30" });
+  });
+
   test("[positive] deskripsi per status & PIC manual/terjadwal", async () => {
     prisma.device.findUnique.mockResolvedValue(device());
     const at = new Date(2026, 8, 14, 7, 5);

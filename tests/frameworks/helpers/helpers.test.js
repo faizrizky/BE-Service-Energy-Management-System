@@ -110,3 +110,23 @@ describe("formatDateTime", () => {
     }
   });
 });
+
+describe("formatDateKey & formatTimeHm", () => {
+  const { formatDateKey, formatTimeHm } = jest.requireActual("../../../src/frameworks/helpers/dateFormat");
+
+  test("[positive] pakai jam WIB, termasuk ganti hari (18.30 UTC = 01.30 WIB besoknya)", () => {
+    const at = new Date("2026-09-30T18:30:00Z");
+    expect(formatDateKey(at)).toBe("2026-10-01");
+    expect(formatTimeHm(at)).toBe("01:30");
+  });
+
+  test("[positive] jam 0-9 & tengah malam tetap 2 digit format 24 jam", () => {
+    const at = new Date("2026-01-04T17:05:00Z"); // 00:05 WIB
+    expect(formatDateKey(at)).toBe("2026-01-05");
+    expect(formatTimeHm(at)).toBe("00:05");
+  });
+
+  test("[positive] nerima string ISO juga", () => {
+    expect(formatTimeHm("2026-10-01T09:25:11.615Z")).toBe("16:25");
+  });
+});

@@ -12,6 +12,7 @@ const MODELS = [
   "commandLog",
   "webhookEvent",
   "securityEvent",
+  "notification",
 ];
 
 const METHODS = [

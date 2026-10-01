@@ -1,4 +1,5 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 const {
   setRelay,
   pingTelemetry,
@@ -193,6 +194,7 @@ async function listDevicesPaginated({
   createdFrom,
   createdTo,
 } = {}) {
+  search = escapeLike(search);
   const andConditions = [];
 
   if (roomId) {
