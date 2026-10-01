@@ -1,19 +1,15 @@
-const axios = require("axios");
+const logger = require("./logger");
+const {
+  createNotification: saveNotification,
+} = require("../../application/use_cases/notification/create.usecase");
 
-const SERVICE_URL = process.env.SERVICE_URL || "http://localhost:4000";
-
-async function createNotification(data) {
-  const response = await axios.post(
-    `${SERVICE_URL}/api/notifications`,
-    {
-      data: data.data,
-      eventType: data.eventType,
-      message: data.message,
-      readAt: data.readAt ?? false,
-    }
-  );
-
-  return response.data;
+async function createNotification({ data, eventType, message }) {
+  try {
+    return await saveNotification({ data, eventType, message, readAt: false });
+  } catch (err) {
+    logger.error("[Notification] Gagal bikin notifikasi:", err.message);
+    return null;
+  }
 }
 
-module.exports = { createNotification,};
+module.exports = { createNotification };

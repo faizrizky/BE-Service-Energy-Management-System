@@ -15,6 +15,28 @@ function emit(event, payload) {
   }
 }
 
+/**
+ * Room Socket.IO buat user yang boleh liat notifikasi (permission
+ * notification.view). Diisi pas connect di socket.js.
+ */
+const NOTIFICATION_ROOM = "notification";
+
+/**
+ * Kirim event cuma ke client di room tertentu.
+ *
+ * Dipake di: emitNotificationCreated, emitNotificationPatch (file ini).
+ */
+function emitToRoom(room, event, payload) {
+  try {
+    getIO().to(room).emit(event, payload);
+  } catch (err) {
+    logger.error(
+      `[Socket] Gagal emit "${event}" ke room ${room}:`,
+      err.message,
+    );
+  }
+}
+
 module.exports = {
   /**
    * Event device:created abis device dibikin.
@@ -159,14 +181,18 @@ module.exports = {
    * - create.usecase.js → createNotification
    * - Frontend: halaman Notification.
    */
-  emitNotificationCreated: (notif) => emit("notif:created", { notif }),
+  emitNotificationCreated: (notif) =>
+    emitToRoom(NOTIFICATION_ROOM, "notif:created", { notif }),
 
-    /**
+  /**
    * Event notif:updated abis notification diupdate.
    *
    * Dipake di:
    * - patch.usecase.js → patchReadAtNotification
    * - Frontend: halaman Notification.
    */
-  emitNotificationPatch: (notif) => emit("notif:updated", { notif }),
+  emitNotificationPatch: (notif) =>
+    emitToRoom(NOTIFICATION_ROOM, "notif:updated", { notif }),
+
+  NOTIFICATION_ROOM,
 };

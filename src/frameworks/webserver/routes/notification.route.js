@@ -1,23 +1,52 @@
-const validate = require("../middlewares/validate");
-const { 
-    createNotificationSchema, findNotificationSchema,
-    patchReadAtNotification
- } = require("../../../application/validators/notification.validator")
-
 const express = require("express");
 const router = express.Router();
 
-const controller = require("../../../adapters/controllers/notification.controller");
-router.post("/", validate(createNotificationSchema), controller.store);
-
+const validate = require("../middlewares/validate");
 const authMiddleware = require("../middlewares/authMiddleware");
+const checkPermission = require("../middlewares/rbacMiddleware");
+const {
+  createNotificationSchema,
+  findNotificationSchema,
+  patchReadAtNotification,
+} = require("../../../application/validators/notification.validator");
+const controller = require("../../../adapters/controllers/notification.controller");
 
 router.use(authMiddleware);
-router.get("/", validate(findNotificationSchema, "query"), controller.index);
-router.patch("/reads", validate(patchReadAtNotification), controller.patchMultipleReadAt)
-router.get("/:id", controller.show);
-router.patch("/:id", validate(patchReadAtNotification), controller.patch)
-router.put("/:id", controller.update);
-router.delete("/:id", controller.destroy)
+
+router.post(
+  "/",
+  checkPermission("notification", "manage"),
+  validate(createNotificationSchema),
+  controller.store,
+);
+router.get(
+  "/",
+  checkPermission("notification", "view"),
+  validate(findNotificationSchema, "query"),
+  controller.index,
+);
+router.patch(
+  "/reads",
+  checkPermission("notification", "view"),
+  validate(patchReadAtNotification),
+  controller.patchMultipleReadAt,
+);
+router.get("/:id", checkPermission("notification", "view"), controller.show);
+router.patch(
+  "/:id",
+  checkPermission("notification", "view"),
+  validate(patchReadAtNotification),
+  controller.patch,
+);
+router.put(
+  "/:id",
+  checkPermission("notification", "manage"),
+  controller.update,
+);
+router.delete(
+  "/:id",
+  checkPermission("notification", "manage"),
+  controller.destroy,
+);
 
 module.exports = router;

@@ -11,6 +11,11 @@ jest.mock("socket.io", () => ({
   }),
 }));
 
+jest.mock("../../../src/frameworks/webserver/middlewares/rbacMiddleware", () => {
+  const checkPermission = jest.fn();
+  checkPermission.roleHasPermission = jest.fn().mockResolvedValue(false);
+  return checkPermission;
+});
 jest.mock("../../../src/frameworks/helpers/sessionRevocation", () => ({
   isSessionRevoked: jest.fn().mockResolvedValue(false),
 }));
@@ -93,6 +98,54 @@ describe("socket", () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("sock1"));
   });
 
+  test("[positive] role dengan notification.view -> gabung room notification", async () => {
+    let io;
+    let rbac;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockResolvedValueOnce(true);
+    const socket = { id: "sock1", user: { id: "u1", roleId: "r-admin" }, join: jest.fn() };
+
+    await io.handlers.connection(socket);
+
+    expect(rbac.roleHasPermission).toHaveBeenCalledWith("r-admin", "notification", "view");
+    expect(socket.join).toHaveBeenCalledWith("notification");
+  });
+
+  test("[negative] Komandan (tanpa notification.view) -> nggak gabung room, nggak nerima event notifikasi (TS-070)", async () => {
+    let io;
+    let rbac;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockResolvedValueOnce(false);
+    const socket = { id: "sock2", user: { id: "u2", roleId: "r-komandan" }, join: jest.fn() };
+
+    await io.handlers.connection(socket);
+
+    expect(socket.join).not.toHaveBeenCalled();
+  });
+
+  test("[negative] gagal cek izin (DB error) -> cuma warning, koneksi tetap jalan tanpa room", async () => {
+    let io;
+    let rbac;
+    let log;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      log = require("../../../src/frameworks/helpers/logger");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockRejectedValueOnce(new Error("db down"));
+    const socket = { id: "sock3", user: { id: "u3", roleId: "r1" }, join: jest.fn() };
+
+    await expect(io.handlers.connection(socket)).resolves.toBeUndefined();
+    expect(socket.join).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith("[WebSocket] Gagal cek izin notifikasi: db down");
+  });
+
   test("[positive/negative] CORS origin: daftar kosong izinkan semua; daftar terisi hanya yang cocok", () => {
     const socketModule = loadSocket();
     const io = socketModule.initSocket({});
@@ -152,6 +205,25 @@ describe("socket-events", () => {
         ["schedule:updated", { schedule: { id: "s1" } }],
         ["schedule:deleted", { scheduleId: "s1" }],
       ]);
+    });
+  });
+
+  test("[positive] event notifikasi cuma dikirim ke room notification, bukan broadcast", () => {
+    jest.isolateModules(() => {
+      const room = { emit: jest.fn() };
+      const io = { emit: jest.fn(), to: jest.fn(() => room) };
+      jest.doMock("../../../src/frameworks/webserver/socket", () => ({ getIO: () => io }));
+      const ev = require("../../../src/frameworks/webserver/socket-events");
+
+      ev.emitNotificationCreated({ id: "n1" });
+      ev.emitNotificationPatch({ id: "n1" });
+
+      expect(io.to).toHaveBeenCalledWith("notification");
+      expect(room.emit.mock.calls).toEqual([
+        ["notif:created", { notif: { id: "n1" } }],
+        ["notif:updated", { notif: { id: "n1" } }],
+      ]);
+      expect(io.emit).not.toHaveBeenCalled();
     });
   });
 

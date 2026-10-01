@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
 const { isSessionRevoked } = require("../helpers/sessionRevocation");
+const { roleHasPermission } = require("./middlewares/rbacMiddleware");
 
 let io;
 
@@ -47,10 +48,20 @@ function initSocket(httpServer) {
     }
   });
 
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     logger.info(
       `[WebSocket] Client terhubung: ${socket.id} (user: ${socket.user?.id})`,
     );
+
+    try {
+      if (
+        await roleHasPermission(socket.user?.roleId, "notification", "view")
+      ) {
+        socket.join("notification");
+      }
+    } catch (err) {
+      logger.warn(`[WebSocket] Gagal cek izin notifikasi: ${err.message}`);
+    }
   });
 
   return io;

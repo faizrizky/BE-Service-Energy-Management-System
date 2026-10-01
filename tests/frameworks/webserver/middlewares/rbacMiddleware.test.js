@@ -5,6 +5,7 @@ jest.mock("../../../../src/frameworks/helpers/securityLog", () => ({
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
 const { logSecurityEvent } = require("../../../../src/frameworks/helpers/securityLog");
 const checkPermission = require("../../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+const { roleHasPermission } = checkPermission;
 const { mockReq, mockRes, mockNext } = require("../../../helpers/http");
 const { resetPrismaMock } = require("../../../helpers/prisma");
 
@@ -74,5 +75,25 @@ describe("checkPermission", () => {
     const { res, next } = await run({ id: "u1", roleId: "r1" });
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
+  });
+});
+
+describe("roleHasPermission", () => {
+  test("[positive] permission ada di DB -> true", async () => {
+    prisma.rolePermission.findFirst.mockResolvedValue({ roleId: "r1" });
+    await expect(roleHasPermission("r1", "notification", "view")).resolves.toBe(true);
+    expect(prisma.rolePermission.findFirst).toHaveBeenCalledWith({
+      where: { roleId: "r1", permission: { module: "notification", action: "view" } },
+    });
+  });
+
+  test("[negative] permission nggak ada -> false", async () => {
+    prisma.rolePermission.findFirst.mockResolvedValue(null);
+    await expect(roleHasPermission("r-komandan", "notification", "view")).resolves.toBe(false);
+  });
+
+  test("[negative] roleId kosong -> false tanpa query DB", async () => {
+    await expect(roleHasPermission(undefined, "notification", "view")).resolves.toBe(false);
+    expect(prisma.rolePermission.findFirst).not.toHaveBeenCalled();
   });
 });
