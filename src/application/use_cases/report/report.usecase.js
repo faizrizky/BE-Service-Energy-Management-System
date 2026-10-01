@@ -494,6 +494,7 @@ async function getActiveSchedules(status) {
 
   return schedules.map((s) => ({
     id: s.id,
+    name: s.name,
     roomName: s.room.name,
     roomLocation: s.room.location,
     deviceCount: s.room._count.devices,
