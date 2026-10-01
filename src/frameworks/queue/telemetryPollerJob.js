@@ -31,6 +31,9 @@ function isDue(device, now) {
 async function pollDevice(device) {
   try {
     await fetchAndStoreTelemetry(device, { timeout: PING_TIMEOUT_MS });
+    logger.debug(
+      `[TelemetryPoller] Poll "${device.name}" (${device.eui}) berhasil`,
+    );
   } catch (err) {
     logger.warn(
       `[TelemetryPoller] Gagal poll "${device.name}" (${device.eui}): ${err.message}`,
@@ -61,6 +64,11 @@ async function runTick() {
     });
 
     const due = devices.filter((d) => isDue(d, now) && !isDeviceBusy(d.id));
+
+    logger.debug(
+      `[TelemetryPoller] Tick: ${devices.length} device, ${due.length} perlu di-poll` +
+        (due.length ? ` (${due.map((d) => d.name).join(", ")})` : ""),
+    );
 
     await Promise.all(due.map((device) => pollDevice(device)));
   } finally {

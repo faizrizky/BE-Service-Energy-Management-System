@@ -2,6 +2,7 @@ const mqtt = require("mqtt");
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
 const deviceUseCase = require("../../application/use_cases/device/device.usecase");
+const { parseUplinkEvent } = require("../chirpstack/contract");
 
 const warnedUnknownEuis = new Set();
 
@@ -24,6 +25,19 @@ function txackTopic() {
 }
 
 /**
+ * Ringkasan satu uplink buat log debug: nama device, relai, kWh, SNR.
+ *
+ * Dipake di: handleMessage (file ini).
+ */
+function describeUplink(event) {
+  const parsed = parseUplinkEvent(event);
+  const name = event?.deviceInfo?.deviceName || event?.deviceInfo?.devEui;
+  const relay = parsed.relayStatus ? parsed.relayStatus.toUpperCase() : "-";
+  const kwh = parsed.usageKwh ?? "-";
+  return `${name} (fPort ${event?.fPort ?? "-"}): relai ${relay}, ${kwh} kWh, SNR ${parsed.snr ?? "-"}`;
+}
+
+/**
  * Proses satu pesan MQTT: parse JSON, terus arahin ke ingestTxAck (topic
  * .../event/txack) atau ingestUplink (.../event/up). Error per pesan cuma
  * dicatet, nggak bikin subscriber berhenti.
@@ -41,12 +55,19 @@ async function handleMessage(topic, payload) {
 
   try {
     if (topic.endsWith("/event/txack")) {
-      await deviceUseCase.ingestTxAck(event);
+      const command = await deviceUseCase.ingestTxAck(event);
+      logger.debug(
+        `[MQTT] Txack ${event?.deviceInfo?.deviceName || event?.deviceInfo?.devEui}` +
+          (command
+            ? `: perintah ${command.id} terkirim ke meter`
+            : ": downlink tanpa perintah pending"),
+      );
       return;
     }
 
     const updated = await deviceUseCase.ingestUplink(event);
     const devEui = event?.deviceInfo?.devEui;
+    if (updated) logger.debug(`[MQTT] Uplink ${describeUplink(event)}`);
     if (!updated && devEui && !warnedUnknownEuis.has(devEui)) {
       warnedUnknownEuis.add(devEui);
       logger.warn(
