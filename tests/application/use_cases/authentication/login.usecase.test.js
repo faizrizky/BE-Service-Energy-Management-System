@@ -105,37 +105,79 @@ describe("login", () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
-  test("[negative] password salah -> 401 pesan SAMA dengan user tidak ada (anti enumerasi) & counter naik", async () => {
+  /** Mock update: increment atomik dibalikin sebagai hitungan baru, kayak Postgres. */
+  function mockCounter(current) {
+    prisma.user.update.mockImplementation(async ({ data }) => {
+      const c = data.failedLoginCount;
+      if (c === undefined) return {};
+      return { failedLoginCount: typeof c === "object" ? current + c.increment : c };
+    });
+  }
+
+  test("[negative] password salah -> 401 pesan SAMA dengan user tidak ada (anti enumerasi) & counter naik atomik", async () => {
     prisma.user.findFirst.mockResolvedValue(user({ failedLoginCount: 1 }));
     bcrypt.compare.mockResolvedValue(false);
+    mockCounter(1);
 
     await expect(login({ username: "admin", password: "wrong" }, req)).rejects.toMatchObject({
       status: 401,
       message: "Username/Email atau password salah",
     });
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: "u1" },
-      data: { failedLoginCount: 2, lockedUntil: undefined },
+      data: { failedLoginCount: { increment: 1 }, lockedUntil: undefined },
+      select: { failedLoginCount: true },
     });
     expect(logSecurityEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "LOGIN_FAILED", detail: "Password salah. Percobaan ke-2" }),
+      expect.objectContaining({ type: "LOGIN_FAILED", username: "admin", detail: "Password salah. Percobaan ke-2" }),
     );
     expect(prisma.refreshToken.create).not.toHaveBeenCalled();
   });
 
-  test("[negative] gagal ke-5 -> akun dikunci 15 menit & log LOGIN_LOCKED", async () => {
+  test("[negative] gagal ke-5 (batas di env test) -> langsung 423 + lockedUntil, dikunci 15 menit & log LOGIN_LOCKED", async () => {
     prisma.user.findFirst.mockResolvedValue(user({ failedLoginCount: 4 }));
     bcrypt.compare.mockResolvedValue(false);
+    mockCounter(4);
     const before = Date.now();
 
-    await expect(login({ username: "admin", password: "wrong" }, req)).rejects.toMatchObject({ status: 401 });
+    const err = await login({ username: "admin", password: "wrong" }, req).catch((e) => e);
 
-    const { data } = prisma.user.update.mock.calls[0][0];
-    expect(data.failedLoginCount).toBe(5);
+    expect(err).toMatchObject({ status: 423, message: expect.stringContaining("Akun terkunci") });
+    const { data } = prisma.user.update.mock.calls[1][0];
     const minutes = (data.lockedUntil.getTime() - before) / 60000;
     expect(minutes).toBeGreaterThan(14.9);
     expect(minutes).toBeLessThan(15.1);
-    expect(logSecurityEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "LOGIN_LOCKED" }));
+    expect(err.lockedUntil).toBe(data.lockedUntil.toISOString());
+    expect(logSecurityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "LOGIN_LOCKED", detail: "Gagal login 5 kali. Akun dikunci 15 menit" }),
+    );
+  });
+
+  test("[negative] kunci lama udah habis lalu salah lagi -> hitungan mulai dari 1, nggak langsung kekunci lagi", async () => {
+    prisma.user.findFirst.mockResolvedValue(
+      user({ failedLoginCount: 5, lockedUntil: new Date(Date.now() - 1000) }),
+    );
+    bcrypt.compare.mockResolvedValue(false);
+    mockCounter(5);
+
+    await expect(login({ username: "admin", password: "wrong" }, req)).rejects.toMatchObject({ status: 401 });
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update.mock.calls[0][0].data).toEqual({ failedLoginCount: 1, lockedUntil: null });
+    expect(logSecurityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "LOGIN_FAILED", detail: "Password salah. Percobaan ke-1" }),
+    );
+  });
+
+  test("[positive] pesan kunci pakai jam WIB (SCHEDULE_TIMEZONE), bukan jam server UTC", async () => {
+    // 04:50 UTC = 11.50 WIB
+    prisma.user.findFirst.mockResolvedValue(user({ lockedUntil: new Date("2999-10-01T04:50:00Z") }));
+
+    await expect(login({ username: "admin", password: "x" }, req)).rejects.toMatchObject({
+      status: 423,
+      message: "Akun terkunci. Silakan coba lagi setelah 1 Okt 2999, 11.50",
+      lockedUntil: "2999-10-01T04:50:00.000Z",
+    });
   });
 
   test("[negative] akun masih terkunci -> 423 tanpa cek password (walau password benar)", async () => {

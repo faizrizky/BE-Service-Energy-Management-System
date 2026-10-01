@@ -91,3 +91,22 @@ describe("logSecurityEvent", () => {
     );
   });
 });
+
+describe("formatDateTime", () => {
+  const { formatDateTime } = jest.requireActual("../../../src/frameworks/helpers/dateFormat");
+  const { config } = require("../../../src/config/config");
+
+  test("[positive] pakai zona waktu aplikasi (Asia/Jakarta), bukan zona server", () => {
+    expect(formatDateTime(new Date("2026-10-01T04:50:00Z"))).toBe("1 Okt 2026, 11.50");
+  });
+
+  test("[positive] ikut SCHEDULE_TIMEZONE kalau diganti", () => {
+    const original = config.schedule.timezone;
+    config.schedule.timezone = "UTC";
+    try {
+      expect(formatDateTime(new Date("2026-10-01T04:50:00Z"))).toBe("1 Okt 2026, 04.50");
+    } finally {
+      config.schedule.timezone = original;
+    }
+  });
+});

@@ -46,7 +46,7 @@ const config = {
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
     max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 300,
-    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 10,
+    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 30,
     powerMax: parseInt(process.env.RATE_LIMIT_POWER_MAX, 10) || 20,
     meMax: parseInt(process.env.RATE_LIMIT_ME_MAX, 10) || 60,
   },
@@ -56,7 +56,8 @@ const config = {
     enabled: Boolean(process.env.TURNSTILE_SECRET_KEY),
   },
   loginSecurity: {
-    maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 5,
+    maxFailedAttempts:
+      parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 20,
     lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10) || 15,
   },
   deviceOnline: {

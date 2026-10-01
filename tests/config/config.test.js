@@ -77,7 +77,7 @@ describe("config defaults & parsing", () => {
     expect(config.rateLimit.max).toBe(300);
     expect(config.rateLimit.powerMax).toBe(20);
     expect(config.turnstile.enabled).toBe(false);
-    expect(config.loginSecurity.maxFailedAttempts).toBe(5);
+    expect(config.loginSecurity.maxFailedAttempts).toBe(20);
     expect(config.schedule.timezone).toBe("Asia/Jakarta");
     expect(config.deviceOnline.graceMs).toBe(120000);
     expect(config.chirpstack.syncDelete).toBe(true);
