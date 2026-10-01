@@ -66,6 +66,14 @@ const config = {
   schedule: {
     timezone: process.env.SCHEDULE_TIMEZONE || "Asia/Jakarta",
   },
+
+  mqtt: {
+    enabled: process.env.MQTT_ENABLED === "true",
+    url: process.env.MQTT_URL,
+    username: process.env.MQTT_USERNAME || undefined,
+    password: process.env.MQTT_PASSWORD || undefined,
+    clientId: process.env.MQTT_CLIENT_ID || "ems-backend",
+  },
 };
 
 /**
@@ -96,6 +104,7 @@ function validateConfig() {
     ["JWT_SECRET", config.jwt.secret],
     ["CHIRPSTACK_MIDDLEWARE_URL", config.chirpstack.baseUrl],
     ["CHIRPSTACK_APPLICATION_ID", config.chirpstack.applicationId],
+    ...(config.mqtt.enabled ? [["MQTT_URL", config.mqtt.url]] : []),
   ];
 
   const missing = required.filter(([, value]) => !value).map(([key]) => key);

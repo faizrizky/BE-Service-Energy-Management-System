@@ -12,6 +12,7 @@ const {
   isDevEui,
   normalizeDevEui,
   sameDevEui,
+  parseUplinkEvent,
 } = require("../../../frameworks/chirpstack/contract");
 const {
   ensureCsDeviceRegistered,
@@ -20,7 +21,11 @@ const {
   pushReportInterval,
 } = require("../../../frameworks/chirpstack/deviceSync");
 const { httpError } = require("../../../frameworks/helpers/httpError");
-const { isDeviceOnline, getOnlineUntil } = require("./device-online.util");
+const {
+  isDeviceOnline,
+  getOnlineUntil,
+  getOnlineWindowMs,
+} = require("./device-online.util");
 const logger = require("../../../frameworks/helpers/logger");
 const { config } = require("../../../config/config");
 
@@ -933,7 +938,7 @@ async function attemptRelayCommand(command, device, attempt) {
     mayHaveReachedMeter = !isWakeTimeout(err);
   }
 
-  if (mayHaveReachedMeter) {
+  if (mayHaveReachedMeter && !config.mqtt.enabled) {
     const actual = await readRelayStateViaTelemetry(device);
     if (actual === command.action) {
       await completeRelayCommand(
@@ -1070,14 +1075,18 @@ async function runRelayCommandLoop(commandId, nextAttempt) {
     }
     if (done) return;
 
+    const retryDelayMs = config.mqtt.enabled
+      ? getOnlineWindowMs(device)
+      : RELAY_RETRY_DELAY_MS;
+
     setRelayAttempt(commandId, {
       attempt,
-      nextRetryAt: new Date(Date.now() + RELAY_RETRY_DELAY_MS),
+      nextRetryAt: new Date(Date.now() + retryDelayMs),
     });
     emitDeviceCommand(
       toCommandEvent({ ...command, notes: command.notes }, device.name),
     );
-    await sleep(RELAY_RETRY_DELAY_MS);
+    await sleep(retryDelayMs);
   }
 }
 
@@ -1130,15 +1139,14 @@ async function fetchAndStoreTelemetry(device, options = {}) {
 }
 
 /**
- * Inti ngambil telemetry tanpa kunci: ping meter, update lastSeenAt & status
- * relai, simpen reading energi, terus kirim event device:status.
+ * Simpen hasil telemetry ke device: update lastSeenAt, bersihin tanda gagal
+ * komunikasi, update status relai kalau beda, simpen reading energi kalau
+ * ada, terus kirim event device:status. Dipake bareng sama ping & uplink MQTT
+ * biar logikanya satu.
  *
- * Dipake di: fetchAndStoreTelemetry, readRelayStateViaTelemetry (file ini).
+ * Dipake di: runTelemetryFetch, ingestUplink (file ini).
  */
-async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
-  const raw = await pingTelemetry(device.eui, { timeout });
-  const parsed = parseTelemetryResponse(raw);
-
+async function applyTelemetry(device, parsed) {
   const updated = await prisma.device.update({
     where: { id: device.id },
     data: {
@@ -1150,7 +1158,7 @@ async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
     },
   });
 
-  if (parsed.usageKwh !== null || parsed.powerWatt !== null) {
+  if (parsed.usageKwh != null || parsed.powerWatt !== null) {
     await prisma.energyReading.create({
       data: {
         deviceId: device.id,
@@ -1172,7 +1180,97 @@ async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
     timestamp: new Date().toISOString(),
   });
 
+  return updated;
+}
+
+/**
+ * Inti ngambil telemetry tanpa kunci: ping meter lewat middleware (ngirim
+ * downlink!), terus hasilnya disimpen lewat applyTelemetry.
+ *
+ * Dipake di: fetchAndStoreTelemetry, readRelayStateViaTelemetry (file ini).
+ */
+async function runTelemetryFetch(device, { timeout = PING_TIMEOUT_MS } = {}) {
+  const raw = await pingTelemetry(device.eui, { timeout });
+  const parsed = parseTelemetryResponse(raw);
+  const updated = await applyTelemetry(device, parsed);
   return { device: updated, telemetry: parsed, raw };
+}
+
+/**
+ * Tandain sukses perintah ON/OFF yang masih pending kalau laporan meter
+ * nunjukin relai udah di posisi yang diminta. Ini bukti paling kuat: relai
+ * beneran pindah, bukan cuma downlink-nya terkirim.
+ *
+ * Dipake di: ingestUplink (file ini).
+ */
+async function confirmCommandsFromUplink(device, relayStatus) {
+  if (!relayStatus) return;
+
+  const pending = await prisma.commandLog.findMany({
+    where: { deviceId: device.id, status: "pending", action: relayStatus },
+  });
+
+  for (const command of pending) {
+    await updatePendingCommand(
+      command,
+      {
+        status: "success",
+        notes: "Terkonfirmasi lewat laporan meter (uplink)",
+      },
+      device.name,
+    );
+  }
+}
+
+/**
+ * Proses satu uplink dari MQTT: cari device dari devEUI-nya, simpen lewat
+ * applyTelemetry, terus konfirmasi perintah ON/OFF yang nunggu. Pasif, nggak
+ * ngirim apa-apa ke meter. Balikin null kalau devEUI-nya nggak valid atau
+ * belum terdaftar di EMS.
+ *
+ * Dipake di: mqtt/uplinkSubscriber.js → handleMessage.
+ */
+async function ingestUplink(event) {
+  const devEui = String(event?.deviceInfo?.devEui || "").toLowerCase();
+  if (!isDevEui(devEui)) return null;
+
+  const device = await prisma.device.findFirst({ where: { eui: devEui } });
+  if (!device) return null;
+
+  const parsed = parseUplinkEvent(event);
+  const updated = await applyTelemetry(device, parsed);
+  await confirmCommandsFromUplink(device, parsed.relayStatus);
+  return updated;
+}
+
+/**
+ * Proses event txack (gateway udah mancarin downlink ke device): cuma ngubah
+ * catatan perintah pending jadi "terkirim". Sengaja nggak dianggap sukses,
+ * soalnya terkirim belum tentu relainya pindah.
+ *
+ * Dipake di: mqtt/uplinkSubscriber.js → handleMessage.
+ */
+async function ingestTxAck(event) {
+  const devEui = String(event?.deviceInfo?.devEui || "").toLowerCase();
+  if (!isDevEui(devEui)) return null;
+
+  const device = await prisma.device.findFirst({ where: { eui: devEui } });
+  if (!device) return null;
+
+  const command = await prisma.commandLog.findFirst({
+    where: { deviceId: device.id, status: "pending" },
+    orderBy: { executedAt: "desc" },
+  });
+
+  if (!command) return null;
+
+  await updatePendingCommand(
+    command,
+    { notes: "Perintah terkirim ke meter, menunggu laporan status meter" },
+    device.name,
+  );
+
+  return command;
 }
 
 /**
@@ -1384,4 +1482,6 @@ module.exports = {
   getDeviceChirpstackMetadata,
   getDeviceTelemetryHistory,
   listChirpstackDeviceCandidates,
+  ingestUplink,
+  ingestTxAck,
 };
