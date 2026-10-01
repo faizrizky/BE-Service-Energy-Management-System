@@ -46,6 +46,7 @@ jest.mock("../../src/frameworks/database/prismaClient", () => {
 });
 
 jest.mock("../../src/frameworks/helpers/logger", () => ({
+  debug: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),

@@ -138,6 +138,37 @@ describe("handleMessage", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
+  test("[positive] uplink device terdaftar -> log debug ringkas (nama, relai, kWh, SNR)", async () => {
+    deviceUseCase.ingestUplink.mockResolvedValue({ id: "d1" });
+    await handleMessage(
+      TOPIC,
+      asPayload({
+        deviceInfo: { devEui: "08000000410000e4", deviceName: "KwH Meter" },
+        fPort: 102,
+        object: { relay_state: "OFF", meter_reading: 207391 },
+        rxInfo: [{ snr: 11.2 }],
+      }),
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      "[MQTT] Uplink KwH Meter (fPort 102): relai OFF, 207.391 kWh, SNR 11.2",
+    );
+  });
+
+  test("[negative] uplink device belum terdaftar -> nggak ada log debug uplink", async () => {
+    deviceUseCase.ingestUplink.mockResolvedValue(null);
+    await handleMessage(TOPIC, asPayload({ deviceInfo: { devEui: "0800000000000077" } }));
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  test("[positive] txack -> log debug nyebut perintah yang terkirim", async () => {
+    deviceUseCase.ingestTxAck.mockResolvedValue({ id: "c1" });
+    await handleMessage(
+      "application/app-test/device/08000000410000e4/event/txack",
+      asPayload({ deviceInfo: { devEui: "08000000410000e4", deviceName: "KwH Meter" } }),
+    );
+    expect(logger.debug).toHaveBeenCalledWith("[MQTT] Txack KwH Meter: perintah c1 terkirim ke meter");
+  });
+
   test("[negative] ingestUplink error (misal database putus) -> dicatat, nggak throw", async () => {
     deviceUseCase.ingestUplink.mockRejectedValue(new Error("db down"));
     await expect(
