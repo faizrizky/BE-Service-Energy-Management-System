@@ -18,9 +18,14 @@ const { formatDateTime } = require("../../../frameworks/helpers/dateFormat");
  * - login (file ini)
  * - refreshToken.usecase.js → refreshAccessToken.
  */
-function signAccessToken(user) {
+function signAccessToken(user, sessionId) {
   return jwt.sign(
-    { id: user.id, roleId: user.roleId, roleName: user.role.name },
+    {
+      id: user.id,
+      roleId: user.roleId,
+      roleName: user.role.name,
+      sid: sessionId,
+    },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn },
   );
@@ -40,11 +45,12 @@ async function issueRefreshToken(userId) {
     Date.now() + config.jwt.refreshExpiresDays * 24 * 60 * 60 * 1000,
   );
 
-  await prisma.refreshToken.create({
+  const { id } = await prisma.refreshToken.create({
     data: { tokenHash: hashToken(rawToken), userId, expiresAt },
+    select: { id: true },
   });
 
-  return rawToken;
+  return { token: rawToken, sessionId: id };
 }
 
 /**
@@ -155,10 +161,8 @@ async function login({ username, password }, req) {
     detail: "Login berhasil",
   });
 
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user),
-    issueRefreshToken(user.id),
-  ]);
+  const { token: refreshToken, sessionId } = await issueRefreshToken(user.id);
+  const accessToken = signAccessToken(user, sessionId);
 
   return {
     accessToken,

@@ -2,6 +2,7 @@ const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
+const { isSessionRevoked } = require("../helpers/sessionRevocation");
 
 let io;
 
@@ -29,12 +30,17 @@ function initSocket(httpServer) {
     },
   });
 
-  io.use((socket, next) => {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.access_token;
+  io.use(async (socket, next) => {
+    const token =
+      socket.handshake.auth?.token || socket.handshake.headers?.access_token;
     if (!token) return next(new Error("Token tidak ditemukan"));
 
     try {
-      socket.user = jwt.verify(token, config.jwt.secret);
+      const decoded = jwt.verify(token, config.jwt.secret);
+      if (await isSessionRevoked(decoded.sid)) {
+        return next(new Error("Sesi sudah berakhir, silakan login ulang"));
+      }
+      socket.user = decoded;
       next();
     } catch (err) {
       next(new Error("Token tidak valid atau kadaluarsa"));

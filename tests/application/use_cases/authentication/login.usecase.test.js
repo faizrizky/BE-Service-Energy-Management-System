@@ -40,14 +40,15 @@ beforeEach(() => {
 });
 
 describe("login", () => {
-  test("[positive] kredensial benar -> access token valid, refresh token, user tanpa passwordHash", async () => {
+  test("[positive] kredensial benar -> access token valid (sid = id refresh token), refresh token, user tanpa passwordHash", async () => {
+    prisma.refreshToken.create.mockResolvedValue({ id: "rt1" });
     prisma.user.findFirst.mockResolvedValue(user({ failedLoginCount: 3 }));
     bcrypt.compare.mockResolvedValue(true);
 
     const result = await login({ username: "admin", password: "correct" }, req);
 
     const payload = jwt.verify(result.accessToken, process.env.JWT_SECRET);
-    expect(payload).toMatchObject({ id: "u1", roleId: "r1", roleName: "Administrator" });
+    expect(payload).toMatchObject({ id: "u1", roleId: "r1", roleName: "Administrator", sid: "rt1" });
     expect(result.refreshToken).toMatch(/^[0-9a-f]{80}$/);
     expect(result.expiresIn).toBe("1h");
     expect(result.user).toEqual({

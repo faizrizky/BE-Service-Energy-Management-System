@@ -11,6 +11,10 @@ jest.mock("socket.io", () => ({
   }),
 }));
 
+jest.mock("../../../src/frameworks/helpers/sessionRevocation", () => ({
+  isSessionRevoked: jest.fn().mockResolvedValue(false),
+}));
+
 const { config } = require("../../../src/config/config");
 const logger = require("../../../src/frameworks/helpers/logger");
 
@@ -26,12 +30,14 @@ function loadSocket() {
   return mod;
 }
 
-function runAuth(io, token) {
+async function runAuth(io, token) {
   const socket = { handshake: { auth: token === undefined ? {} : { token } } };
   const next = jest.fn();
-  io.middlewares[0](socket, next);
+  await io.middlewares[0](socket, next);
   return { socket, next };
 }
+
+
 
 afterEach(() => {
   config.cors.allowedOrigins = [];
@@ -50,20 +56,35 @@ describe("socket", () => {
     expect(getIO()).toBe(io);
   });
 
-  test("[positive] token valid -> socket.user terisi", () => {
+  test("[positive] token valid -> socket.user terisi", async () => {
     const io = loadSocket().initSocket({});
     const token = jwt.sign({ id: "u1" }, process.env.JWT_SECRET);
-    const { socket, next } = runAuth(io, token);
+    const { socket, next } = await runAuth(io, token);
     expect(next).toHaveBeenCalledWith();
     expect(socket.user).toMatchObject({ id: "u1" });
   });
 
-  test("[negative] tanpa token / token invalid -> koneksi ditolak", () => {
+  test("[negative] tanpa token / token invalid -> koneksi ditolak", async () => {
     const io = loadSocket().initSocket({});
-    expect(runAuth(io, undefined).next.mock.calls[0][0].message).toBe("Token tidak ditemukan");
-    expect(runAuth(io, "rusak").next.mock.calls[0][0].message).toBe("Token tidak valid atau kadaluarsa");
+    expect((await runAuth(io, undefined)).next.mock.calls[0][0].message).toBe("Token tidak ditemukan");
+    expect((await runAuth(io, "rusak")).next.mock.calls[0][0].message).toBe("Token tidak valid atau kadaluarsa");
     const expired = jwt.sign({ id: "u1", exp: Math.floor(Date.now() / 1000) - 10 }, process.env.JWT_SECRET);
-    expect(runAuth(io, expired).next.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect((await runAuth(io, expired)).next.mock.calls[0][0]).toBeInstanceOf(Error);
+  });
+
+  test("[negative] sesi udah logout -> koneksi socket ditolak (TS-006)", async () => {
+    let io;
+    let revocation;
+    jest.isolateModules(() => {
+      revocation = require("../../../src/frameworks/helpers/sessionRevocation");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    revocation.isSessionRevoked.mockResolvedValueOnce(true);
+    const token = jwt.sign({ id: "u1", sid: "rt1" }, process.env.JWT_SECRET);
+    const { socket, next } = await runAuth(io, token);
+    expect(revocation.isSessionRevoked).toHaveBeenCalledWith("rt1");
+    expect(next.mock.calls[0][0].message).toBe("Sesi sudah berakhir, silakan login ulang");
+    expect(socket.user).toBeUndefined();
   });
 
   test("[positive] event connection dicatat", () => {

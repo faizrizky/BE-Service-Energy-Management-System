@@ -43,10 +43,10 @@ async function refreshAccessToken(rawRefreshToken, req) {
     data: { revokedAt: new Date() },
   });
 
-  const [accessToken, newRefreshToken] = await Promise.all([
-    signAccessToken(record.user),
-    issueRefreshToken(record.userId),
-  ]);
+  const { token: newRefreshToken, sessionId } = await issueRefreshToken(
+    record.userId,
+  );
+  const accessToken = signAccessToken(record.user, sessionId);
 
   await logSecurityEvent({
     type: "REFRESH_TOKEN_SUCCESS",
