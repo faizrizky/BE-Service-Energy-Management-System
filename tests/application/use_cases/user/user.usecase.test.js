@@ -1,7 +1,11 @@
 jest.mock("bcrypt", () => ({ hash: jest.fn(async (value) => `hashed:${value}`) }));
+jest.mock("../../../../src/frameworks/helpers/sessionRevocation", () => ({
+  revokeSession: jest.fn().mockResolvedValue(undefined),
+}));
 
 const bcrypt = require("bcrypt");
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
+const { revokeSession } = require("../../../../src/frameworks/helpers/sessionRevocation");
 const userUseCase = require("../../../../src/application/use_cases/user/user.usecase");
 const { resetPrismaMock } = require("../../../helpers/prisma");
 
@@ -164,17 +168,60 @@ describe("updateUser", () => {
 });
 
 describe("deleteUser", () => {
-  test("[positive] menghapus berdasarkan id", async () => {
-    prisma.user.delete.mockResolvedValue({ id: "u1" });
-    await userUseCase.deleteUser("u1");
-    expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "u1" } });
+  const target = (overrides = {}) => ({
+    ...dbUser({ id: "u2", fullName: "Sari" }),
+    _count: { schedules: 0 },
+    refreshTokens: [{ id: "rt1" }, { id: "rt2" }],
+    ...overrides,
   });
 
-  test("[negative] user masih punya relasi (P2003) diteruskan", async () => {
-    prisma.user.delete.mockRejectedValue(Object.assign(new Error("FK"), { code: "P2003" }));
-    await expect(userUseCase.deleteUser("u1")).rejects.toMatchObject({ code: "P2003" });
+  beforeEach(() => revokeSession.mockClear());
+
+  test("[positive] user yang pernah login -> relasi dilepas, user dihapus dalam satu transaksi (TS-110)", async () => {
+    prisma.user.findUnique.mockResolvedValue(target());
+    await userUseCase.deleteUser("u2", "admin1");
+
+    expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: "u2" } });
+    expect(prisma.commandLog.updateMany).toHaveBeenCalledWith({
+      where: { triggeredByUserId: "u2" },
+      data: { triggeredByUserId: null },
+    });
+    expect(prisma.gateway.updateMany).toHaveBeenCalledWith({ where: { installedById: "u2" }, data: { installedById: null } });
+    expect(prisma.room.updateMany).toHaveBeenCalledWith({ where: { picUserId: "u2" }, data: { picUserId: null } });
+    expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "u2" } });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  test("[positive] semua sesi login user dicabut -> access token-nya langsung nggak berlaku", async () => {
+    prisma.user.findUnique.mockResolvedValue(target());
+    await userUseCase.deleteUser("u2", "admin1");
+    expect(revokeSession.mock.calls).toEqual([["rt1"], ["rt2"]]);
+  });
+
+  test("[negative] hapus akun sendiri -> 400 tanpa query DB", async () => {
+    await expect(userUseCase.deleteUser("admin1", "admin1")).rejects.toMatchObject({
+      status: 400,
+      message: "Tidak bisa menghapus akun sendiri",
+    });
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  test("[negative] user masih pembuat schedule -> 409 pesan jelas, nggak ada yang dihapus", async () => {
+    prisma.user.findUnique.mockResolvedValue(target({ _count: { schedules: 3 } }));
+    await expect(userUseCase.deleteUser("u2", "admin1")).rejects.toMatchObject({
+      status: 409,
+      message: 'User "Sari" masih tercatat sebagai pembuat 3 schedule, hapus atau ubah schedule-nya dulu',
+    });
+    expect(prisma.user.delete).not.toHaveBeenCalled();
+    expect(revokeSession).not.toHaveBeenCalled();
+  });
+
+  test("[negative] user nggak ada -> 404", async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    await expect(userUseCase.deleteUser("x", "admin1")).rejects.toMatchObject({ status: 404, message: "User tidak ditemukan" });
   });
 });
+
 
 describe("updateProfile", () => {
   test("[positive] hanya fullName, phone, address, avatarUrl yang bisa diubah", async () => {

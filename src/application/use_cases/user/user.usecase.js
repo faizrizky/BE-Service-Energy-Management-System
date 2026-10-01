@@ -1,5 +1,9 @@
 const bcrypt = require("bcrypt");
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { httpError } = require("../../../frameworks/helpers/httpError");
+const {
+  revokeSession,
+} = require("../../../frameworks/helpers/sessionRevocation");
 
 /**
  * Buang passwordHash dari data user dan ringkes role jadi { id, name } sebelum
@@ -159,12 +163,49 @@ async function updateUser(id, data) {
 }
 
 /**
- * Hapus user berdasarkan id.
+ * Hapus user. Data lain yang nunjuk ke user dilepas dulu (refresh token
+ * dihapus, log perintah/gateway/PIC room dikosongin), sesi login-nya dicabut
+ * biar access token-nya langsung nggak berlaku. Ditolak kalo hapus diri
+ * sendiri (400) atau user masih tercatat sebagai pembuat schedule (409).
  *
  * Dipake di: user.controller.js → destroy (DELETE /api/users/:id).
  */
-async function deleteUser(id) {
-  return prisma.user.delete({ where: { id } });
+async function deleteUser(id, actorId) {
+  if (id === actorId) throw httpError("Tidak bisa menghapus akun sendiri", 400);
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    include: {
+      _count: { select: { schedules: true } },
+      refreshTokens: { select: { id: true } },
+    },
+  });
+  if (!user) throw httpError("User tidak ditemukan", 404);
+  if (user._count.schedules > 0) {
+    throw httpError(
+      `User "${user.fullName}" masih tercatat sebagai pembuat ${user._count.schedules} schedule, hapus atau ubah schedule-nya dulu`,
+      409,
+    );
+  }
+
+  await prisma.$transaction([
+    prisma.refreshToken.deleteMany({ where: { userId: id } }),
+    prisma.commandLog.updateMany({
+      where: { triggeredByUserId: id },
+      data: { triggeredByUserId: null },
+    }),
+    prisma.gateway.updateMany({
+      where: { installedById: id },
+      data: { installedById: null },
+    }),
+    prisma.room.updateMany({
+      where: { picUserId: id },
+      data: { picUserId: null },
+    }),
+    prisma.user.delete({ where: { id } }),
+  ]);
+
+  await Promise.all(user.refreshTokens.map((t) => revokeSession(t.id)));
 }
 
 /**

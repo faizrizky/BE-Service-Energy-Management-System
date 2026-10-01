@@ -1,3 +1,4 @@
+const { httpError } = require("../../../frameworks/helpers/httpError");
 const { prisma } = require("../../../frameworks/database/prismaClient");
 
 /**
@@ -99,12 +100,32 @@ async function updateRole(id, data) {
 }
 
 /**
- * Hapus role berdasarkan id.
+ * Hapus role custom beserta relasi permission-nya. Role bawaan (isSystem)
+ * dan role yang masih dipakai user ditolak 409 dengan pesan jelas, bukan
+ * error foreign key 500.
  *
  * Dipake di: role.controller.js → destroy (DELETE /api/roles/:id).
  */
 async function deleteRole(id) {
-  return prisma.role.delete({ where: { id } });
+  const role = await prisma.role.findUnique({
+    where: { id },
+    include: { _count: { select: { users: true } } },
+  });
+  if (!role) throw httpError("Role tidak ditemukan", 404);
+  if (role.isSystem) {
+    throw httpError(`Role bawaan "${role.name}" tidak bisa dihapus`, 409);
+  }
+  if (role._count.users > 0) {
+    throw httpError(
+      `Role "${role.name}" masih dipakai ${role._count.users} user, pindahkan user ke role lain dulu`,
+      409,
+    );
+  }
+
+  await prisma.$transaction([
+    prisma.rolePermission.deleteMany({ where: { roleId: id } }),
+    prisma.role.delete({ where: { id } }),
+  ]);
 }
 
 /**
