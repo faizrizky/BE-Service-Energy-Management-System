@@ -17,3 +17,4 @@ process.env.ALLOWED_ORIGINS = "";
 process.env.LOGIN_MAX_FAILED_ATTEMPTS = "5";
 process.env.LOGIN_LOCKOUT_MINUTES = "15";
 process.env.ENERGY_RETENTION_DAYS = "90";
+process.env.MQTT_ENABLED = "false";

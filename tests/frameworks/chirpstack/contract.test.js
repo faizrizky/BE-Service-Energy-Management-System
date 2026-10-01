@@ -4,7 +4,65 @@ const {
   isDevEui,
   parseTelemetryResponse,
   parseRelayResponse,
+  parseUplinkEvent,
 } = require("../../../src/frameworks/chirpstack/contract");
+
+// Dipotong dari uplink asli KwH Meter (mosquitto_sub, 2026-09-30): frame status
+// tanpa data meter (has_metering_data false), relai OFF.
+const REAL_STATUS_UPLINK = {
+  time: "2026-09-30T04:07:38.263809+00:00",
+  deviceInfo: {
+    applicationId: "90b6e803-efee-4ac5-ae90-6ae7f6eee950",
+    deviceName: "KwH Meter",
+    devEui: "08000000410000e4",
+    deviceClassEnabled: "CLASS_C",
+  },
+  fPort: 113,
+  object: {
+    relay_state: "OFF",
+    relay_status: "disconnected",
+    meter_reading: null,
+    has_metering_data: false,
+    battery: 100.0,
+    voltage: null,
+    current: null,
+  },
+  rxInfo: [{ gatewayId: "7276ff0045060ffb", snr: 11.2 }],
+};
+
+describe("parseUplinkEvent", () => {
+  test("[positive] uplink asli: relai OFF, tanpa kWh, SNR & gateway dari rxInfo pertama", () => {
+    expect(parseUplinkEvent(REAL_STATUS_UPLINK)).toEqual({
+      relayStatus: "off",
+      usageKwh: null,
+      powerWatt: null,
+      battery: 100,
+      voltageRaw: null,
+      currentRaw: null,
+      snr: 11.2,
+      gatewayId: "7276ff0045060ffb",
+      ts: new Date("2026-09-30T04:07:38.263809+00:00").getTime(),
+    });
+  });
+
+  test("[positive] frame yang bawa meter_reading -> dikonversi ke kWh sama kayak jalur ping", () => {
+    const parsed = parseUplinkEvent({
+      ...REAL_STATUS_UPLINK,
+      object: { relay_state: "ON", meter_reading: 415782 },
+    });
+    expect(parsed).toMatchObject({ relayStatus: "on", usageKwh: 415.782 });
+  });
+
+  test("[negative] tanpa object & rxInfo (decoder gagal) -> semua null, nggak throw", () => {
+    expect(parseUplinkEvent({ time: "2026-09-30T04:07:38Z" })).toMatchObject({
+      relayStatus: null,
+      usageKwh: null,
+      snr: null,
+      gatewayId: null,
+    });
+    expect(() => parseUplinkEvent(null)).not.toThrow();
+  });
+});
 
 describe("normalizeDevEui", () => {
   test("[positive] trim & lowercase devEUI valid", () => {
