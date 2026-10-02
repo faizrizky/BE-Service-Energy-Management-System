@@ -9,6 +9,7 @@ const {
 const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const { formatDateTime } = require("../../../frameworks/helpers/dateFormat");
+const { revokeAllSessions } = require("./logout.usecase");
 
 /**
  * Bikin JWT access token isinya id, roleId, sama roleName, masa berlakunya
@@ -132,6 +133,7 @@ async function login({ username, password }, req) {
         where: { id: user.id },
         data: { lockedUntil },
       });
+      await revokeAllSessions(user.id);
     }
 
     await logSecurityEvent({

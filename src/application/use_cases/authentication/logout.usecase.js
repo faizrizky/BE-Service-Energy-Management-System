@@ -29,4 +29,25 @@ async function logout(rawRefreshToken) {
   await revokeSession(record.id);
 }
 
-module.exports = { logout };
+/**
+ * Cabut semua sesi login satu user: refresh token yang masih aktif dicabut,
+ * dan semua sesi yang belum kadaluarsa (termasuk yang udah dirotasi, karena
+ * access token-nya bisa masih hidup) masuk daftar cabut di Redis.
+ *
+ * Dipake di: login.usecase.js → login (pas akun baru kekunci).
+ */
+async function revokeAllSessions(userId) {
+  const now = new Date();
+  const tokens = await prisma.refreshToken.findMany({
+    where: { userId, expiresAt: { gt: now } },
+    select: { id: true },
+  });
+
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: now },
+  });
+
+  await Promise.all(tokens.map((t) => revokeSession(t.id)));
+}
+module.exports = { logout, revokeAllSessions };
