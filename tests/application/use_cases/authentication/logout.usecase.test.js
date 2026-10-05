@@ -5,7 +5,7 @@ jest.mock("../../../../src/frameworks/helpers/sessionRevocation", () => ({
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
 const { hashToken } = require("../../../../src/frameworks/helpers/tokenHash");
 const { revokeSession } = require("../../../../src/frameworks/helpers/sessionRevocation");
-const { logout } = require("../../../../src/application/use_cases/authentication/logout.usecase");
+const { logout, revokeAllSessions } = require("../../../../src/application/use_cases/authentication/logout.usecase");
 const { resetPrismaMock } = require("../../../helpers/prisma");
 
 beforeEach(() => {
@@ -51,5 +51,37 @@ describe("logout", () => {
     prisma.refreshToken.findUnique.mockResolvedValue({ id: "rt1", revokedAt: null });
     revokeSession.mockRejectedValueOnce(new Error("redis down"));
     await expect(logout("token-xxxxxxxxxxxxxxxxxxxx")).rejects.toThrow("redis down");
+  });
+});
+
+describe("revokeAllSessions", () => {
+  beforeEach(() => {
+    prisma.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+  });
+
+  test("[positive] semua refresh token aktif dicabut & semua sesi yang belum kadaluarsa masuk daftar cabut", async () => {
+    prisma.refreshToken.findMany.mockResolvedValue([{ id: "rt1" }, { id: "rt2" }, { id: "rt-lama-dirotasi" }]);
+
+    await revokeAllSessions("u1");
+
+    const find = prisma.refreshToken.findMany.mock.calls[0][0];
+    expect(find.where.userId).toBe("u1");
+    expect(find.where.expiresAt.gt).toBeInstanceOf(Date);
+    const update = prisma.refreshToken.updateMany.mock.calls[0][0];
+    expect(update.where).toEqual({ userId: "u1", revokedAt: null });
+    expect(update.data.revokedAt).toBeInstanceOf(Date);
+    expect(revokeSession.mock.calls).toEqual([["rt1"], ["rt2"], ["rt-lama-dirotasi"]]);
+  });
+
+  test("[negative] user belum punya sesi -> nggak ada yang dicabut di Redis, nggak error", async () => {
+    prisma.refreshToken.findMany.mockResolvedValue([]);
+    await expect(revokeAllSessions("u1")).resolves.toBeUndefined();
+    expect(revokeSession).not.toHaveBeenCalled();
+  });
+
+  test("[negative] Redis error diteruskan (kunci akun nggak diam-diam gagal nendang sesi)", async () => {
+    prisma.refreshToken.findMany.mockResolvedValue([{ id: "rt1" }]);
+    revokeSession.mockRejectedValueOnce(new Error("redis down"));
+    await expect(revokeAllSessions("u1")).rejects.toThrow("redis down");
   });
 });

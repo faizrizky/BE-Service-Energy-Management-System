@@ -3,7 +3,12 @@ jest.mock("../../../../src/frameworks/helpers/securityLog", () => ({
   logSecurityEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../../../../src/application/use_cases/authentication/logout.usecase", () => ({
+  revokeAllSessions: jest.fn().mockResolvedValue(undefined),
+}));
+
 const bcrypt = require("bcrypt");
+const { revokeAllSessions } = require("../../../../src/application/use_cases/authentication/logout.usecase");
 const jwt = require("jsonwebtoken");
 const { prisma } = require("../../../../src/frameworks/database/prismaClient");
 const { logSecurityEvent } = require("../../../../src/frameworks/helpers/securityLog");
@@ -153,6 +158,16 @@ describe("login", () => {
     expect(logSecurityEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "LOGIN_LOCKED", detail: "Gagal login 5 kali. Akun dikunci 15 menit" }),
     );
+    // Sesi yang lagi aktif di perangkat lain ikut ditendang.
+    expect(revokeAllSessions).toHaveBeenCalledWith("u1");
+  });
+
+  test("[negative] gagal login tapi belum sampai batas -> sesi aktif TIDAK dicabut", async () => {
+    prisma.user.findFirst.mockResolvedValue(user({ failedLoginCount: 1 }));
+    bcrypt.compare.mockResolvedValue(false);
+    mockCounter(1);
+    await expect(login({ username: "admin", password: "wrong" }, req)).rejects.toMatchObject({ status: 401 });
+    expect(revokeAllSessions).not.toHaveBeenCalled();
   });
 
   test("[negative] kunci lama udah habis lalu salah lagi -> hitungan mulai dari 1, nggak langsung kekunci lagi", async () => {
