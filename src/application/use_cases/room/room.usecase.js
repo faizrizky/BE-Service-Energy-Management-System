@@ -106,7 +106,7 @@ async function listRoomsPaginated({
         //     },
         //   },
         // },
-        { location: { contains: search, mode: "insensitive" } },
+        // { location: { contains: search, mode: "insensitive" } },
       ],
     });
   }
