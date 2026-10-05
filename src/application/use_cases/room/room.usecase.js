@@ -99,13 +99,13 @@ async function listRoomsPaginated({
     andConditions.push({
       OR: [
         { name: { contains: search, mode: "insensitive" } },
-        {
-          devices: {
-            some: {
-              gatewayId: { contains: search, mode: "insensitive" },
-            },
-          },
-        },
+        // {
+        //   devices: {
+        //     some: {
+        //       gatewayId: { contains: search, mode: "insensitive" },
+        //     },
+        //   },
+        // },
         { location: { contains: search, mode: "insensitive" } },
       ],
     });
