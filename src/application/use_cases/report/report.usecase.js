@@ -635,23 +635,37 @@ async function toXlsx(rows) {
  * Ngubah baris export jadi file PDF A4 landscape (buffer), otomatis pindah
  * halaman kalo penuh.
  *
+ * Features:
+ * - Table column alignment benar
+ * - Row height mengikuti isi
+ * - Automatic page break
+ * - Header tabel diulang setiap halaman
+ * - Border tabel
+ * - Buffer output
+ * 
  * Dipake di: report.controller.js → exportEnergy (format=pdf).
  */
 async function toPdf(rows) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      margin: 30,
       size: "A4",
       layout: "landscape",
+      margins: {
+        top: 40,
+        bottom: 40,
+        left: 30,
+        right: 30,
+      },
+      bufferPages: true,
     });
+
     const chunks = [];
-    doc.on("data", (c) => chunks.push(c));
+
+    doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc.fontSize(14).text("Energy Usage Report", { align: "center" });
-    doc.moveDown();
-
+    // CONFIG
     const headers = [
       "Recorded At",
       "Room",
@@ -659,37 +673,243 @@ async function toPdf(rows) {
       "Power (W)",
       "Usage (kWh)",
     ];
-    const widths = [150, 120, 120, 90, 90];
-    const startX = doc.x;
 
-    const drawRow = (values, bold = false) => {
-      const y = doc.y;
-      if (y > 520) {
-        doc.addPage();
-      }
-      let x = startX;
-      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9);
-      values.forEach((v, i) => {
-        doc.text(String(v), x, doc.y, { width: widths[i] });
-        x += widths[i];
-      });
-      doc.moveDown(0.3);
+    const widths = [
+      190, // Recorded At
+      150, // Room
+      170, // Device
+      100, // Power
+      100, // Usage
+    ];
+
+    const tableWidth = widths.reduce((sum, width) => sum + width, 0);
+
+    const rowPadding = 5;
+    const minRowHeight = 22;
+
+    const tableX = doc.page.margins.left;
+
+    // HELPERS
+    const drawCell = ({
+      text, 
+      x, 
+      y, 
+      width, 
+      height, 
+      bold = false, 
+      align = "left", 
+      fontSize = 8,
+    }) => {
+      doc
+        .font(bold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(fontSize)
+        .fillColor("#000000")
+        .text(String(text ?? "-"), x + rowPadding, y + rowPadding, {
+          width: width - rowPadding * 2,
+          height: height - rowPadding * 2,
+          align,
+          lineBreak: true,
+          valign: "center",
+        });
+
+      doc.rect(x, y, width, height).stroke();
     };
 
-    drawRow(headers, true);
-    rows.forEach((r) =>
+    const getRowHeight = (values) => {
+      doc.font("Helvetica").fontSize(8);
+
+      const heights = values.map((value, index) => {
+        return doc.heightOfString(String(value ?? "-"), {
+          width: widths[index] - rowPadding * 2,
+        });
+      });
+
+      return Math.max(
+        minRowHeight,
+        Math.ceil(Math.max(...heights) + rowPadding * 2),
+      );
+    };
+
+    // TITLE
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(18)
+      .text("Energy Usage Report", {
+        align: "center",
+      });
+
+    doc.moveDown(0.5);
+
+    // TABLE HEADER
+    const drawHeader = () => {
+      const y = doc.y;
+
+      const headerHeight = 30;
+
+      headers.forEach((header, index) => {
+        const x =
+          tableX +
+          widths.slice(0, index).reduce((sum, width) => sum + width, 0);
+
+        drawCell({
+          text: header,
+          x,
+          y,
+          width: widths[index],
+          height: headerHeight,
+          bold: true,
+          fontSize: 10,
+          align: "left",
+        });
+      });
+
+      doc.y = y + headerHeight;
+    };
+
+    // TABLE ROW
+    const drawRow = (values) => {
+      const rowHeight = getRowHeight(values);
+
+      const bottomLimit =
+        doc.page.height - doc.page.margins.bottom;
+
+      // Kalau row tidak muat, buat halaman baru
+      if (doc.y + rowHeight > bottomLimit) {
+        doc.addPage();
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(14)
+          .text("Energy Usage Report", {
+            align: "center",
+          });
+
+        doc.moveDown(0.5);
+
+        drawHeader();
+      }
+
+      const y = doc.y;
+
+      values.forEach((value, index) => {
+        const x =
+          tableX +
+          widths.slice(0, index).reduce((sum, width) => sum + width, 0);
+
+        drawCell({
+          text: value,
+          x,
+          y,
+          width: widths[index],
+          height: rowHeight,
+          align:"left",
+        });
+      });
+
+      doc.y = y + rowHeight;
+    };
+
+    // DRAW TABLE
+    drawHeader();
+
+    for (const row of rows) {
       drawRow([
-        r.recordedAt.toISOString(),
-        r.roomName,
-        r.deviceName,
-        r.powerWatt ?? "-",
-        r.usageKwh ?? "-",
-      ]),
-    );
+        row.recordedAt
+          ? new Date(row.recordedAt).toLocaleString("id-ID")
+          : "-",
+
+        row.roomName ?? "-",
+
+        row.deviceName ?? "-",
+
+        row.powerWatt != null
+          ? Number(row.powerWatt).toFixed(2)
+          : "-",
+
+        row.usageKwh != null
+          ? Number(row.usageKwh).toFixed(3)
+          : "-",
+      ]);
+    }
+
+    // FOOTER
+    const range = doc.bufferedPageRange();
+
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+
+      doc
+        .font("Helvetica")
+        .fontSize(7)
+        .fillColor("#666666")
+        .text(
+          `Page ${i + 1} of ${range.count}`,
+          doc.page.margins.left,
+          doc.page.height - 25,
+          {
+            width: tableWidth,
+            align: "right",
+          },
+        );
+    }
 
     doc.end();
   });
 }
+
+// async function toPdf(rows) {
+//   return new Promise((resolve, reject) => {
+//     const doc = new PDFDocument({
+//       margin: 30,
+//       size: "A4",
+//       layout: "landscape",
+//     });
+//     const chunks = [];
+//     doc.on("data", (c) => chunks.push(c));
+//     doc.on("end", () => resolve(Buffer.concat(chunks)));
+//     doc.on("error", reject);
+
+//     doc.fontSize(14).text("Energy Usage Report", { align: "center" });
+//     doc.moveDown();
+
+//     const headers = [
+//       "Recorded At",
+//       "Room",
+//       "Device",
+//       "Power (W)",
+//       "Usage (kWh)",
+//     ];
+//     const widths = [150, 120, 120, 90, 90];
+//     const startX = doc.x;
+
+//     const drawRow = (values, bold = false) => {
+//       const y = doc.y;
+//       if (y > 520) {
+//         doc.addPage();
+//       }
+//       let x = startX;
+//       doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9);
+//       values.forEach((v, i) => {
+//         doc.text(String(v), x, doc.y, { width: widths[i] });
+//         x += widths[i];
+//       });
+//       doc.moveDown(0.3);
+//     };
+
+//     drawRow(headers, true);
+//     rows.forEach((r) =>
+//       drawRow([
+//         r.recordedAt.toISOString(),
+//         r.roomName,
+//         r.deviceName,
+//         r.powerWatt ?? "-",
+//         r.usageKwh ?? "-",
+//       ]),
+//     );
+
+//     doc.end();
+//   });
+// }
 
 module.exports = {
   getDeviceUsage,
