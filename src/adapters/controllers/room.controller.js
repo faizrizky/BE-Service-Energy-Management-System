@@ -254,6 +254,32 @@ async function deviceLogs(req, res, next) {
   }
 }
 
+async function exportRoomDevice(req, res, next){
+  try {
+    const { id: roomId, deviceId } = req.params;
+    const { format } = req.query;
+    const rows = await roomUseCase.getDeviceLogs(roomId, deviceId);
+
+    const filename = `device-logs`;
+
+    if (format === "xlsx") {
+          const xlsx = await roomUseCase.toXlsx(rows);
+          res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          );
+          res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${filename}.xlsx"`,
+          );
+          return res.send(xlsx);
+        }
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   index,
   summary,
@@ -266,4 +292,5 @@ module.exports = {
   power,
   deviceLogs,
   usageSummary,
+  exportRoomDevice
 };
