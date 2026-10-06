@@ -88,6 +88,12 @@ async function createRole(data) {
  * Dipake di: role.controller.js → update (PUT /api/roles/:id).
  */
 async function updateRole(id, data) {
+  const existing = await prisma.role.findUnique({ where: { id } });
+  if (!existing) throw httpError("Role tidak ditemukan", 404);
+  if (existing.isSystem) {
+    throw httpError(`Role bawaan "${existing.name}" tidak bisa diubah`, 409);
+  }
+
   const role = await prisma.role.update({
     where: { id },
     data: { name: data.name, description: data.description },
