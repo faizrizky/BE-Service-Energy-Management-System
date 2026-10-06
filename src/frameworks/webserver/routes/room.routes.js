@@ -52,6 +52,11 @@ router.get(
   controller.deviceLogs,
 );
 router.get(
+  "/:id/devices/:deviceId/logs/export",
+  checkPermission("room", "view"),
+  controller.exportRoomDevice,
+);
+router.get(
   "/:id/usage-summary",
   checkPermission("room", "view"),
   controller.usageSummary,

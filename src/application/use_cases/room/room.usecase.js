@@ -8,6 +8,7 @@ const {
   formatDateKey,
   formatTimeHm,
 } = require("../../../frameworks/helpers/dateFormat");
+const ExcelJS = require("exceljs");
 
 /**
  * Progres resync yang paling duluan kelar buat sekumpulan device di satu room.
@@ -725,6 +726,26 @@ async function getDeviceLogs(roomId, deviceId) {
   }));
 }
 
+async function toXlsx(rows) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Energy Report");
+  sheet.columns = [
+    { header: "DATE", key: "date", width: 24 },
+    { header: "DESCRIPTION", key: "description", width: 20 },
+    { header: "PIC NAME", key: "picName", width: 20 },
+    { header: "PIC ROLE", key: "picRole", width: 14 },
+  ];
+  rows.forEach((r) =>
+    sheet.addRow({
+      date: r.date,
+      description: r.description,
+      picName: r.picName,
+      picRole: r.picRole ?? "",
+    }),
+  );
+  return workbook.xlsx.writeBuffer();
+}
+
 module.exports = {
   listRoomsPaginated,
   listRoomsSummary,
@@ -737,4 +758,5 @@ module.exports = {
   listDevicesInRoom,
   powerRoom,
   getDeviceLogs,
+  toXlsx
 };
