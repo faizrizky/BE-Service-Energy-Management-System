@@ -7,6 +7,9 @@ const {
   generateRawToken,
 } = require("../../../frameworks/helpers/tokenHash");
 const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
+const { httpError } = require("../../../frameworks/helpers/httpError");
+const { formatDateTime } = require("../../../frameworks/helpers/dateFormat");
+const { revokeAllSessions } = require("./logout.usecase");
 
 /**
  * Bikin JWT access token isinya id, roleId, sama roleName, masa berlakunya
@@ -16,9 +19,14 @@ const { logSecurityEvent } = require("../../../frameworks/helpers/securityLog");
  * - login (file ini)
  * - refreshToken.usecase.js → refreshAccessToken.
  */
-function signAccessToken(user) {
+function signAccessToken(user, sessionId) {
   return jwt.sign(
-    { id: user.id, roleId: user.roleId, roleName: user.role.name },
+    {
+      id: user.id,
+      roleId: user.roleId,
+      roleName: user.role.name,
+      sid: sessionId,
+    },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn },
   );
@@ -38,11 +46,27 @@ async function issueRefreshToken(userId) {
     Date.now() + config.jwt.refreshExpiresDays * 24 * 60 * 60 * 1000,
   );
 
-  await prisma.refreshToken.create({
+  const { id } = await prisma.refreshToken.create({
     data: { tokenHash: hashToken(rawToken), userId, expiresAt },
+    select: { id: true },
   });
 
-  return rawToken;
+  return { token: rawToken, sessionId: id };
+}
+
+/**
+ * Error 423 akun terkunci, bawa lockedUntil (ISO) biar FE bisa nampilin
+ * hitung mundur sendiri.
+ *
+ * Dipake di: login (file ini).
+ */
+function lockedError(lockedUntil) {
+  const err = httpError(
+    `Akun terkunci. Silakan coba lagi setelah ${formatDateTime(lockedUntil)}`,
+    423,
+  );
+  err.lockedUntil = lockedUntil.toISOString();
+  return err;
 }
 
 /**
@@ -62,11 +86,7 @@ async function login({ username, password }, req) {
     include: { role: true },
   });
 
-  const genericErr = () => {
-    const err = new Error("Username/Email atau password salah");
-    err.status = 401;
-    throw err;
-  };
+  const genericErr = () => httpError("Username/Email atau password salah", 401);
 
   if (!user) {
     await logSecurityEvent({
@@ -87,29 +107,34 @@ async function login({ username, password }, req) {
       detail: `Akun terkunci sampai ${user.lockedUntil.toISOString()}`,
     });
 
-    const err = new Error(
-      `Akun terkunci. Silakan coba lagi setelah ${user.lockedUntil.toLocaleString()}`,
-    );
-    err.status = 423;
-    throw err;
+    throw lockedError(user.lockedUntil);
   }
 
   const isValid = await bcrypt.compare(password, user.passwordHash);
 
   if (!isValid) {
-    const nextCount = user.failedLoginCount + 1;
-    const locked = nextCount >= maxFailedAttempts;
+    const lockExpired = user.lockedUntil && user.lockedUntil <= new Date();
 
-    await prisma.user.update({
+    const { failedLoginCount: nextCount } = await prisma.user.update({
       where: { id: user.id },
       data: {
-        failedLoginCount: nextCount,
-        lockedUntil:
-          nextCount >= maxFailedAttempts
-            ? new Date(Date.now() + lockoutMinutes * 60 * 1000)
-            : undefined,
+        failedLoginCount: lockExpired ? 1 : { increment: 1 },
+        lockedUntil: lockExpired ? null : undefined,
       },
+      select: { failedLoginCount: true },
     });
+
+    const locked = nextCount >= maxFailedAttempts;
+    const lockedUntil = locked
+      ? new Date(Date.now() + lockoutMinutes * 60 * 1000)
+      : null;
+    if (locked) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lockedUntil },
+      });
+      await revokeAllSessions(user.id);
+    }
 
     await logSecurityEvent({
       type: locked ? "LOGIN_LOCKED" : "LOGIN_FAILED",
@@ -121,6 +146,7 @@ async function login({ username, password }, req) {
         : `Password salah. Percobaan ke-${nextCount}`,
     });
 
+    if (locked) throw lockedError(lockedUntil);
     throw genericErr();
   }
 
@@ -137,10 +163,8 @@ async function login({ username, password }, req) {
     detail: "Login berhasil",
   });
 
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user),
-    issueRefreshToken(user.id),
-  ]);
+  const { token: refreshToken, sessionId } = await issueRefreshToken(user.id);
+  const accessToken = signAccessToken(user, sessionId);
 
   return {
     accessToken,

@@ -46,7 +46,7 @@ const config = {
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
     max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 300,
-    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 10,
+    authMax: parseInt(process.env.RATE_LIMIT_AUTH_MAX, 10) || 30,
     powerMax: parseInt(process.env.RATE_LIMIT_POWER_MAX, 10) || 20,
     meMax: parseInt(process.env.RATE_LIMIT_ME_MAX, 10) || 60,
   },
@@ -56,7 +56,8 @@ const config = {
     enabled: Boolean(process.env.TURNSTILE_SECRET_KEY),
   },
   loginSecurity: {
-    maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 5,
+    maxFailedAttempts:
+      parseInt(process.env.LOGIN_MAX_FAILED_ATTEMPTS, 10) || 20,
     lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES, 10) || 15,
   },
   deviceOnline: {
@@ -65,6 +66,14 @@ const config = {
   },
   schedule: {
     timezone: process.env.SCHEDULE_TIMEZONE || "Asia/Jakarta",
+  },
+
+  mqtt: {
+    enabled: process.env.MQTT_ENABLED === "true",
+    url: process.env.MQTT_URL,
+    username: process.env.MQTT_USERNAME || undefined,
+    password: process.env.MQTT_PASSWORD || undefined,
+    clientId: process.env.MQTT_CLIENT_ID || "ems-backend",
   },
 };
 
@@ -96,6 +105,7 @@ function validateConfig() {
     ["JWT_SECRET", config.jwt.secret],
     ["CHIRPSTACK_MIDDLEWARE_URL", config.chirpstack.baseUrl],
     ["CHIRPSTACK_APPLICATION_ID", config.chirpstack.applicationId],
+    ...(config.mqtt.enabled ? [["MQTT_URL", config.mqtt.url]] : []),
   ];
 
   const missing = required.filter(([, value]) => !value).map(([key]) => key);

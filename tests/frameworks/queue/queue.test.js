@@ -128,6 +128,23 @@ describe("telemetryPollerJob", () => {
     await expect(poller.runTick()).resolves.toBeUndefined();
   });
 
+  test("[positive] MQTT aktif -> poller nggak dinyalain sama sekali (nggak ada ping yang menuhin jalur radio)", async () => {
+    process.env.MQTT_ENABLED = "true";
+    try {
+      let mqttPoller;
+      jest.isolateModules(() => {
+        mqttPoller = require("../../../src/frameworks/queue/telemetryPollerJob");
+      });
+      expect(mqttPoller.startTelemetryPoller()).toBeNull();
+      await flush();
+      expect(intervalSpy).not.toHaveBeenCalled();
+      expect(prisma.device.findMany).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("MQTT aktif"));
+    } finally {
+      process.env.MQTT_ENABLED = "false";
+    }
+  });
+
   test("[positive] start menjalankan tick langsung & tiap 1 menit", async () => {
     prisma.device.findMany.mockResolvedValue([]);
     expect(poller.startTelemetryPoller()).toBe(123);

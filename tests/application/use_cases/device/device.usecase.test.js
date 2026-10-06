@@ -78,6 +78,10 @@ function useStore({ devices = [device()], logs = [] } = {}) {
     const found = db.devices.find((d) => d.id === where.id);
     return found ? { ...found } : null;
   });
+  prisma.device.findFirst.mockImplementation(async ({ where }) => {
+    const found = db.devices.find((d) => match(d, where));
+    return found ? { ...found } : null;
+  });
   prisma.device.update.mockImplementation(async ({ where, data }) => {
     const found = db.devices.find((d) => d.id === where.id);
     Object.assign(found, data);
@@ -864,6 +868,40 @@ describe("processRelayCommand", () => {
     expect(prisma.energyReading.create).toHaveBeenCalled();
   });
 
+  describe("mode MQTT (MQTT_ENABLED=true)", () => {
+    beforeEach(() => {
+      config.mqtt.enabled = true;
+    });
+    afterEach(() => {
+      config.mqtt.enabled = false;
+    });
+
+    test("[positive] konfirmasi hilang -> NGGAK ping (hemat downlink), nunggu uplink lalu retry", async () => {
+      cs.setRelay
+        .mockResolvedValueOnce({ data: { stateConfirmed: false } })
+        .mockResolvedValueOnce({ data: { stateConfirmed: true } });
+      const store = useStore({ logs: [pendingCommandFromMinutesAgo(10)] });
+
+      await uc.processRelayCommand("c1");
+
+      expect(cs.pingTelemetry).not.toHaveBeenCalled();
+      expect(cs.setRelay).toHaveBeenCalledTimes(2);
+      expect(store.log("c1").status).toBe("success");
+    });
+
+    test("[positive] jeda retry = satu interval uplink + grace (getOnlineWindowMs), bukan jeda tetap", async () => {
+      cs.setRelay
+        .mockResolvedValueOnce({ data: { stateConfirmed: false } })
+        .mockResolvedValueOnce({ data: { stateConfirmed: true } });
+      useStore({ logs: [pendingCommandFromMinutesAgo(10)] });
+
+      await uc.processRelayCommand("c1");
+
+      const expectedMs = 30 * 60 * 1000 + config.deviceOnline.graceMs;
+      expect(setTimeout.mock.calls.map(([, ms]) => ms)).toContain(expectedMs);
+    });
+  });
+
   test("[positive] relai sudah sesuai & perintah terakhir sukses -> downlink dilewati", async () => {
     const { store, commandId } = await requestThenProcess("on", {
       devices: [device({ status: "on" })],
@@ -1052,6 +1090,174 @@ describe("failRelayCommand & recoverPendingRelayCommands", () => {
     expect(logger.info).toHaveBeenCalledTimes(1);
     await uc.recoverPendingRelayCommands();
     expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ingestUplink (MQTT)", () => {
+  const uplink = (overrides = {}) => ({
+    deviceInfo: { devEui: DEV_EUI },
+    object: { relay_state: "ON", meter_reading: 205912 },
+    rxInfo: [{ gatewayId: "7276ff0045060ffb", snr: 11.2 }],
+    time: "2026-09-30T04:07:38Z",
+    ...overrides,
+  });
+
+  test("[positive] device dikenal -> lastSeen, status, reading & event sama kayak jalur ping, tanpa downlink", async () => {
+    const store = useStore();
+
+    await uc.ingestUplink(uplink());
+
+    expect(cs.pingTelemetry).not.toHaveBeenCalled();
+    expect(store.device()).toMatchObject({ status: "on", lastSeenAt: expect.any(Date), commFailedAt: null });
+    expect(prisma.energyReading.create).toHaveBeenCalledWith({ data: { deviceId: "d1", powerWatt: null, usageKwh: 205.912 } });
+    // source harus "telemetry": frontend cuma update lastSeenAt kalau source-nya itu.
+    expect(events.emitDeviceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: "d1", status: "on", online: true, source: "telemetry" }),
+    );
+  });
+
+  test("[positive] devEUI huruf besar dari ChirpStack tetap ketemu", async () => {
+    useStore();
+    await expect(uc.ingestUplink(uplink({ deviceInfo: { devEui: DEV_EUI.toUpperCase() } }))).resolves.toMatchObject({ id: "d1" });
+    expect(prisma.device.findFirst).toHaveBeenCalledWith({ where: { eui: DEV_EUI } });
+  });
+
+  test("[negative] frame status tanpa meter_reading -> online & relai diupdate, reading nggak disimpan", async () => {
+    const store = useStore({ devices: [device({ status: "on" })] });
+
+    await uc.ingestUplink(uplink({ object: { relay_state: "OFF", meter_reading: null, has_metering_data: false } }));
+
+    expect(store.device()).toMatchObject({ status: "off", lastSeenAt: expect.any(Date) });
+    expect(prisma.energyReading.create).not.toHaveBeenCalled();
+  });
+
+  test("[negative] devEUI belum terdaftar di EMS -> null, nggak ada yang ditulis", async () => {
+    useStore({ devices: [] });
+    await expect(uc.ingestUplink(uplink({ deviceInfo: { devEui: "0800000000000024" } }))).resolves.toBeNull();
+    expect(prisma.device.update).not.toHaveBeenCalled();
+    expect(events.emitDeviceStatus).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["deviceInfo nggak ada", {}],
+    ["devEUI bukan 16 hex", { deviceInfo: { devEui: "bukan-eui" } }],
+  ])("[negative] %s -> null tanpa query database", async (_, overrides) => {
+    await expect(uc.ingestUplink({ ...uplink(), ...overrides, deviceInfo: overrides.deviceInfo })).resolves.toBeNull();
+    expect(prisma.device.findFirst).not.toHaveBeenCalled();
+  });
+
+  describe("konfirmasi perintah ON/OFF dari uplink", () => {
+    const pendingOn = () => ({
+      id: "c1",
+      roomId: ROOM,
+      deviceId: "d1",
+      action: "on",
+      triggerType: "manual",
+      status: "pending",
+      notes: "Mengirim perintah, menunggu meter bangun",
+      executedAt: new Date(Date.now() - 60000),
+    });
+
+    test("[positive] relay_state sama dengan perintah pending -> perintah sukses & dikabarin lewat socket", async () => {
+      const store = useStore({ logs: [pendingOn()] });
+
+      await uc.ingestUplink(uplink({ object: { relay_state: "ON" } }));
+
+      expect(store.log("c1")).toMatchObject({
+        status: "success",
+        notes: "Terkonfirmasi lewat laporan meter (uplink)",
+      });
+      expect(events.emitDeviceCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ commandId: "c1", status: "success" }),
+      );
+    });
+
+    test("[negative] relay_state beda dari perintah (relai belum pindah) -> perintah tetap pending", async () => {
+      const store = useStore({ logs: [pendingOn()] });
+
+      await uc.ingestUplink(uplink({ object: { relay_state: "OFF" } }));
+
+      expect(store.log("c1").status).toBe("pending");
+    });
+
+    test("[negative] uplink tanpa relay_state -> nggak ada perintah yang dikonfirmasi", async () => {
+      const store = useStore({ logs: [pendingOn()] });
+
+      await uc.ingestUplink(uplink({ object: { meter_reading: 1000 } }));
+
+      expect(store.log("c1").status).toBe("pending");
+      expect(events.emitDeviceCommand).not.toHaveBeenCalled();
+    });
+
+    test("[negative] perintah yang udah selesai (bukan pending) nggak disentuh lagi", async () => {
+      const store = useStore({ logs: [{ ...pendingOn(), status: "failed", notes: "timeout" }] });
+
+      await uc.ingestUplink(uplink({ object: { relay_state: "ON" } }));
+
+      expect(store.log("c1")).toMatchObject({ status: "failed", notes: "timeout" });
+    });
+  });
+});
+
+describe("ingestTxAck (MQTT)", () => {
+  const txack = (overrides = {}) => ({ deviceInfo: { devEui: DEV_EUI }, fCntDown: 12, ...overrides });
+  const pending = (overrides = {}) => ({
+    id: "c1",
+    roomId: ROOM,
+    deviceId: "d1",
+    action: "off",
+    triggerType: "manual",
+    status: "pending",
+    notes: "Mengirim perintah, menunggu meter bangun",
+    executedAt: new Date(Date.now() - 30000),
+    ...overrides,
+  });
+
+  test("[positive] ada perintah pending -> catatan jadi 'terkirim', status TETAP pending", async () => {
+    const store = useStore({ logs: [pending()] });
+
+    await expect(uc.ingestTxAck(txack())).resolves.toMatchObject({ id: "c1" });
+
+    expect(store.log("c1")).toMatchObject({
+      status: "pending",
+      notes: "Perintah terkirim ke meter, menunggu laporan status meter",
+    });
+    expect(events.emitDeviceCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: "c1", status: "pending" }),
+    );
+    // txack bukan bukti relai pindah: status device nggak boleh berubah.
+    expect(store.device().status).toBe("off");
+    expect(prisma.device.update).not.toHaveBeenCalled();
+  });
+
+  test("[positive] beberapa perintah pending -> yang terbaru yang ditandai", async () => {
+    const store = useStore({
+      logs: [
+        pending({ id: "lama", executedAt: new Date(Date.now() - 120000) }),
+        pending({ id: "baru", executedAt: new Date(Date.now() - 10000) }),
+      ],
+    });
+
+    await uc.ingestTxAck(txack());
+
+    expect(store.log("baru").notes).toBe("Perintah terkirim ke meter, menunggu laporan status meter");
+    expect(store.log("lama").notes).toBe("Mengirim perintah, menunggu meter bangun");
+  });
+
+  test("[negative] nggak ada perintah pending (misal downlink ping) -> null, nggak ada yang diubah", async () => {
+    useStore({ logs: [pending({ status: "success" })] });
+    await expect(uc.ingestTxAck(txack())).resolves.toBeNull();
+    expect(events.emitDeviceCommand).not.toHaveBeenCalled();
+  });
+
+  test("[negative] device belum terdaftar -> null", async () => {
+    useStore({ devices: [] });
+    await expect(uc.ingestTxAck(txack({ deviceInfo: { devEui: "0800000000000024" } }))).resolves.toBeNull();
+  });
+
+  test("[negative] devEUI nggak valid -> null tanpa query database", async () => {
+    await expect(uc.ingestTxAck(txack({ deviceInfo: { devEui: "bukan-eui" } }))).resolves.toBeNull();
+    expect(prisma.device.findFirst).not.toHaveBeenCalled();
   });
 });
 

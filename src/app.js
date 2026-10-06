@@ -27,10 +27,12 @@ const {
 } = require("./frameworks/queue/relayCommandQueue");
 const deviceUseCase = require("./application/use_cases/device/device.usecase");
 const { createServer } = require("./frameworks/webserver/server");
+const { startUplinkSubscriber } = require("./frameworks/mqtt/uplinkSubscriber");
 
 let httpServer;
 let scheduleWorker;
 let relayCommandWorker;
+let mqttClient;
 
 /**
  * Pintu masuk backend. Ngecek env, nyambungin database & Redis, bikin server
@@ -71,6 +73,7 @@ async function bootstrap() {
     startRetentionJob();
     startTelemetryPoller();
     startGatewaySync();
+    if (config.mqtt.enabled) mqttClient = startUplinkSubscriber();
 
     httpServer.listen(config.app.port, () => {
       logger.info(
@@ -115,6 +118,11 @@ async function gracefulShutdown(signal) {
     if (relayCommandWorker) {
       await relayCommandWorker.close(true);
       logger.info("[Shutdown] Relay command worker ditutup");
+    }
+
+    if (mqttClient) {
+      await mqttClient.endAsync();
+      logger.info("[Shutdown] MQTT ditutup");
     }
 
     await scheduleQueue.close();

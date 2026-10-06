@@ -1,5 +1,5 @@
 const userUseCase = require("../../application/use_cases/user/user.usecase");
-const { createNotification } = require("../../frameworks/helpers/notification")
+const { createNotification } = require("../../frameworks/helpers/notification");
 
 /**
  * Handler list user pake paginasi, bisa filter role, search, sama tanggal.
@@ -67,8 +67,8 @@ async function store(req, res, next) {
       data: user,
       eventType: "success",
       message: `User "${user.fullname}" has been Created`,
-      readAt: "false"
-    })
+      readAt: "false",
+    });
 
     res.status(201).json({ data: user });
   } catch (err) {
@@ -101,7 +101,7 @@ async function update(req, res, next) {
  */
 async function destroy(req, res, next) {
   try {
-    await userUseCase.deleteUser(req.params.id);
+    await userUseCase.deleteUser(req.params.id, req.user.id);
     res.status(204).send();
   } catch (err) {
     next(err);

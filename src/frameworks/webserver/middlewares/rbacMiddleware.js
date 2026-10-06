@@ -27,14 +27,7 @@ function checkPermission(module, action) {
           .json({ message: "Role tidak ditemukan pada token" });
       }
 
-      const permission = await prisma.rolePermission.findFirst({
-        where: {
-          roleId,
-          permission: { module, action },
-        },
-      });
-
-      if (!permission) {
+      if (!(await roleHasPermission(roleId, module, action))) {
         await logSecurityEvent({
           type: "PERMISSION_DENIED",
           userId: req.user?.id,
@@ -54,4 +47,20 @@ function checkPermission(module, action) {
   };
 }
 
+/**
+ * true kalo role punya permission module.action di database.
+ *
+ * Dipake di:
+ * - checkPermission (file ini)
+ * - socket.js → connection (gabung room notifikasi).
+ */
+async function roleHasPermission(roleId, module, action) {
+  if (!roleId) return false;
+  const permission = await prisma.rolePermission.findFirst({
+    where: { roleId, permission: { module, action } },
+  });
+  return Boolean(permission);
+}
+
 module.exports = checkPermission;
+module.exports.roleHasPermission = roleHasPermission;

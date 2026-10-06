@@ -1,4 +1,5 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const {
   timeRangesOverlap,
@@ -152,6 +153,7 @@ async function listSchedulesPaginated(filter = {}) {
     scheduledFrom,
     scheduledTo,
   } = filter;
+  const term = escapeLike(search);
 
   const andConditions = [];
   if (roomId) andConditions.push({ roomId });
@@ -173,9 +175,9 @@ async function listSchedulesPaginated(filter = {}) {
   if (search) {
     andConditions.push({
       OR: [
-        { name: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-        { room: { name: { contains: search, mode: "insensitive" } } },
+        { name: { contains: term, mode: "insensitive" } },
+        { description: { contains: term, mode: "insensitive" } },
+        { room: { name: { contains: term, mode: "insensitive" } } },
       ],
     });
   }

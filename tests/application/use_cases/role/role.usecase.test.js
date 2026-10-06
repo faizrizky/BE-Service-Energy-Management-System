@@ -140,14 +140,38 @@ describe("updateRole", () => {
 });
 
 describe("deleteRole", () => {
-  test("[positive] hapus berdasarkan id", async () => {
-    prisma.role.delete.mockResolvedValue({ id: "r1" });
+  const dbRole = (overrides = {}) => ({ id: "r1", name: "Teknisi", isSystem: false, _count: { users: 0 }, ...overrides });
+
+  test("[positive] role custom (punya permission) -> relasi permission dihapus dulu, lalu role, dalam satu transaksi", async () => {
+    prisma.role.findUnique.mockResolvedValue(dbRole());
     await roleUseCase.deleteRole("r1");
+    expect(prisma.rolePermission.deleteMany).toHaveBeenCalledWith({ where: { roleId: "r1" } });
     expect(prisma.role.delete).toHaveBeenCalledWith({ where: { id: "r1" } });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  test("[negative] role masih dipakai user (P2003) diteruskan", async () => {
-    prisma.role.delete.mockRejectedValue(Object.assign(new Error("FK"), { code: "P2003" }));
-    await expect(roleUseCase.deleteRole("r1")).rejects.toMatchObject({ code: "P2003" });
+  test("[negative] role bawaan (isSystem) -> 409, nggak ada yang dihapus (TS-066)", async () => {
+    prisma.role.findUnique.mockResolvedValue(dbRole({ name: "Komandan", isSystem: true }));
+    await expect(roleUseCase.deleteRole("r1")).rejects.toMatchObject({
+      status: 409,
+      message: 'Role bawaan "Komandan" tidak bisa dihapus',
+    });
+    expect(prisma.role.delete).not.toHaveBeenCalled();
+    expect(prisma.rolePermission.deleteMany).not.toHaveBeenCalled();
+  });
+
+  test("[negative] role masih dipakai user -> 409 pesan jelas (bukan FK error 500)", async () => {
+    prisma.role.findUnique.mockResolvedValue(dbRole({ _count: { users: 2 } }));
+    await expect(roleUseCase.deleteRole("r1")).rejects.toMatchObject({
+      status: 409,
+      message: 'Role "Teknisi" masih dipakai 2 user, pindahkan user ke role lain dulu',
+    });
+    expect(prisma.role.delete).not.toHaveBeenCalled();
+  });
+
+  test("[negative] role nggak ada -> 404", async () => {
+    prisma.role.findUnique.mockResolvedValue(null);
+    await expect(roleUseCase.deleteRole("x")).rejects.toMatchObject({ status: 404, message: "Role tidak ditemukan" });
   });
 });
+

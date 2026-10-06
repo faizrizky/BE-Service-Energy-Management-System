@@ -76,6 +76,23 @@ function parseTelemetryResponse(raw) {
 }
 
 /**
+ * Nerjemahin event uplink ChirpStack dari MQTT (application/.../event/up) ke
+ * format yang sama kayak parseTelemetryResponse. Field decoder-nya (object)
+ * sama persis sama `telemetry` dari middleware, jadi cukup dipetain ulang.
+ *
+ * Dipake di: device.usecase.js → ingestUplink.
+ */
+function parseUplinkEvent(event) {
+  const rx = event?.rxInfo?.[0] ?? {};
+  return parseTelemetryResponse({
+    telemetry: event?.object ?? {},
+    snr: rx.snr ?? null,
+    gatewayId: rx.gatewayId ?? null,
+    time: event?.time,
+  });
+}
+
+/**
  * Baca hasil perintah relay: udah dikonfirmasi meter apa belom, sama status
  * relai terakhirnya.
  *
@@ -95,4 +112,5 @@ module.exports = {
   isDevEui,
   parseTelemetryResponse,
   parseRelayResponse,
+  parseUplinkEvent,
 };

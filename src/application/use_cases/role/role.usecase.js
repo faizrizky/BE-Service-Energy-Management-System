@@ -1,4 +1,6 @@
+const { httpError } = require("../../../frameworks/helpers/httpError");
 const { prisma } = require("../../../frameworks/database/prismaClient");
+const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 
 /**
  * List role pake paginasi (urut nama) dan search nama, plus permission &
@@ -7,6 +9,7 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
  * Dipake di: role.controller.js → index (GET /api/roles).
  */
 async function listRolesPaginated({ page = 1, rowsPerPage = 10, search } = {}) {
+  search = escapeLike(search);
   const where = search
     ? {
         OR: [{ name: { contains: search, mode: "insensitive" } }],
@@ -85,6 +88,12 @@ async function createRole(data) {
  * Dipake di: role.controller.js → update (PUT /api/roles/:id).
  */
 async function updateRole(id, data) {
+  const existing = await prisma.role.findUnique({ where: { id } });
+  if (!existing) throw httpError("Role tidak ditemukan", 404);
+  if (existing.isSystem) {
+    throw httpError(`Role bawaan "${existing.name}" tidak bisa diubah`, 409);
+  }
+
   const role = await prisma.role.update({
     where: { id },
     data: { name: data.name, description: data.description },
@@ -99,12 +108,32 @@ async function updateRole(id, data) {
 }
 
 /**
- * Hapus role berdasarkan id.
+ * Hapus role custom beserta relasi permission-nya. Role bawaan (isSystem)
+ * dan role yang masih dipakai user ditolak 409 dengan pesan jelas, bukan
+ * error foreign key 500.
  *
  * Dipake di: role.controller.js → destroy (DELETE /api/roles/:id).
  */
 async function deleteRole(id) {
-  return prisma.role.delete({ where: { id } });
+  const role = await prisma.role.findUnique({
+    where: { id },
+    include: { _count: { select: { users: true } } },
+  });
+  if (!role) throw httpError("Role tidak ditemukan", 404);
+  if (role.isSystem) {
+    throw httpError(`Role bawaan "${role.name}" tidak bisa dihapus`, 409);
+  }
+  if (role._count.users > 0) {
+    throw httpError(
+      `Role "${role.name}" masih dipakai ${role._count.users} user, pindahkan user ke role lain dulu`,
+      409,
+    );
+  }
+
+  await prisma.$transaction([
+    prisma.rolePermission.deleteMany({ where: { roleId: id } }),
+    prisma.role.delete({ where: { id } }),
+  ]);
 }
 
 /**

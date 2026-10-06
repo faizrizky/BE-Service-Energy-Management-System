@@ -4,6 +4,7 @@ const {
   fetchAndStoreTelemetry,
   isDeviceBusy,
 } = require("../../application/use_cases/device/device.usecase");
+const { config } = require("../../config/config");
 
 const TICK_MS = 60 * 1000;
 const PING_TIMEOUT_MS = 120000;
@@ -30,6 +31,9 @@ function isDue(device, now) {
 async function pollDevice(device) {
   try {
     await fetchAndStoreTelemetry(device, { timeout: PING_TIMEOUT_MS });
+    logger.debug(
+      `[TelemetryPoller] Poll "${device.name}" (${device.eui}) berhasil`,
+    );
   } catch (err) {
     logger.warn(
       `[TelemetryPoller] Gagal poll "${device.name}" (${device.eui}): ${err.message}`,
@@ -61,6 +65,11 @@ async function runTick() {
 
     const due = devices.filter((d) => isDue(d, now) && !isDeviceBusy(d.id));
 
+    logger.debug(
+      `[TelemetryPoller] Tick: ${devices.length} device, ${due.length} perlu di-poll` +
+        (due.length ? ` (${due.map((d) => d.name).join(", ")})` : ""),
+    );
+
     await Promise.all(due.map((device) => pollDevice(device)));
   } finally {
     isRunning = false;
@@ -73,10 +82,17 @@ async function runTick() {
  * Dipake di: app.js → bootstrap.
  */
 function startTelemetryPoller() {
+  if (config.mqtt.enabled) {
+    logger.info(
+      "[TelemetryPoller] MQTT aktif, polling telemetry dimatikan (data dari uplink)",
+    );
+    return null;
+  }
+
   runTick();
   const interval = setInterval(runTick, TICK_MS);
   logger.info(
-    "[TelemetryPoller] Polling aktif (tick tiap 1 menit, per-device sesuai intervalMinutes)",
+    "[TelemetryPoller] Polling aktif (tick tiap 60 detik, per-device sesuai intervalMinutes)",
   );
   return interval;
 }

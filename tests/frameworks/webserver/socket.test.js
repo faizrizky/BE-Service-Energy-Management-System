@@ -11,6 +11,15 @@ jest.mock("socket.io", () => ({
   }),
 }));
 
+jest.mock("../../../src/frameworks/webserver/middlewares/rbacMiddleware", () => {
+  const checkPermission = jest.fn();
+  checkPermission.roleHasPermission = jest.fn().mockResolvedValue(false);
+  return checkPermission;
+});
+jest.mock("../../../src/frameworks/helpers/sessionRevocation", () => ({
+  isSessionRevoked: jest.fn().mockResolvedValue(false),
+}));
+
 const { config } = require("../../../src/config/config");
 const logger = require("../../../src/frameworks/helpers/logger");
 
@@ -26,12 +35,14 @@ function loadSocket() {
   return mod;
 }
 
-function runAuth(io, token) {
+async function runAuth(io, token) {
   const socket = { handshake: { auth: token === undefined ? {} : { token } } };
   const next = jest.fn();
-  io.middlewares[0](socket, next);
+  await io.middlewares[0](socket, next);
   return { socket, next };
 }
+
+
 
 afterEach(() => {
   config.cors.allowedOrigins = [];
@@ -50,26 +61,89 @@ describe("socket", () => {
     expect(getIO()).toBe(io);
   });
 
-  test("[positive] token valid -> socket.user terisi", () => {
+  test("[positive] token valid -> socket.user terisi", async () => {
     const io = loadSocket().initSocket({});
     const token = jwt.sign({ id: "u1" }, process.env.JWT_SECRET);
-    const { socket, next } = runAuth(io, token);
+    const { socket, next } = await runAuth(io, token);
     expect(next).toHaveBeenCalledWith();
     expect(socket.user).toMatchObject({ id: "u1" });
   });
 
-  test("[negative] tanpa token / token invalid -> koneksi ditolak", () => {
+  test("[negative] tanpa token / token invalid -> koneksi ditolak", async () => {
     const io = loadSocket().initSocket({});
-    expect(runAuth(io, undefined).next.mock.calls[0][0].message).toBe("Token tidak ditemukan");
-    expect(runAuth(io, "rusak").next.mock.calls[0][0].message).toBe("Token tidak valid atau kadaluarsa");
+    expect((await runAuth(io, undefined)).next.mock.calls[0][0].message).toBe("Token tidak ditemukan");
+    expect((await runAuth(io, "rusak")).next.mock.calls[0][0].message).toBe("Token tidak valid atau kadaluarsa");
     const expired = jwt.sign({ id: "u1", exp: Math.floor(Date.now() / 1000) - 10 }, process.env.JWT_SECRET);
-    expect(runAuth(io, expired).next.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect((await runAuth(io, expired)).next.mock.calls[0][0]).toBeInstanceOf(Error);
+  });
+
+  test("[negative] sesi udah logout -> koneksi socket ditolak (TS-006)", async () => {
+    let io;
+    let revocation;
+    jest.isolateModules(() => {
+      revocation = require("../../../src/frameworks/helpers/sessionRevocation");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    revocation.isSessionRevoked.mockResolvedValueOnce(true);
+    const token = jwt.sign({ id: "u1", sid: "rt1" }, process.env.JWT_SECRET);
+    const { socket, next } = await runAuth(io, token);
+    expect(revocation.isSessionRevoked).toHaveBeenCalledWith("rt1");
+    expect(next.mock.calls[0][0].message).toBe("Sesi sudah berakhir, silakan login ulang");
+    expect(socket.user).toBeUndefined();
   });
 
   test("[positive] event connection dicatat", () => {
     const io = loadSocket().initSocket({});
     io.handlers.connection({ id: "sock1", user: { id: "u1" } });
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("sock1"));
+  });
+
+  test("[positive] role dengan notification.view -> gabung room notification", async () => {
+    let io;
+    let rbac;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockResolvedValueOnce(true);
+    const socket = { id: "sock1", user: { id: "u1", roleId: "r-admin" }, join: jest.fn() };
+
+    await io.handlers.connection(socket);
+
+    expect(rbac.roleHasPermission).toHaveBeenCalledWith("r-admin", "notification", "view");
+    expect(socket.join).toHaveBeenCalledWith("notification");
+  });
+
+  test("[negative] Komandan (tanpa notification.view) -> nggak gabung room, nggak nerima event notifikasi (TS-070)", async () => {
+    let io;
+    let rbac;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockResolvedValueOnce(false);
+    const socket = { id: "sock2", user: { id: "u2", roleId: "r-komandan" }, join: jest.fn() };
+
+    await io.handlers.connection(socket);
+
+    expect(socket.join).not.toHaveBeenCalled();
+  });
+
+  test("[negative] gagal cek izin (DB error) -> cuma warning, koneksi tetap jalan tanpa room", async () => {
+    let io;
+    let rbac;
+    let log;
+    jest.isolateModules(() => {
+      rbac = require("../../../src/frameworks/webserver/middlewares/rbacMiddleware");
+      log = require("../../../src/frameworks/helpers/logger");
+      io = require("../../../src/frameworks/webserver/socket").initSocket({});
+    });
+    rbac.roleHasPermission.mockRejectedValueOnce(new Error("db down"));
+    const socket = { id: "sock3", user: { id: "u3", roleId: "r1" }, join: jest.fn() };
+
+    await expect(io.handlers.connection(socket)).resolves.toBeUndefined();
+    expect(socket.join).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith("[WebSocket] Gagal cek izin notifikasi: db down");
   });
 
   test("[positive/negative] CORS origin: daftar kosong izinkan semua; daftar terisi hanya yang cocok", () => {
@@ -131,6 +205,25 @@ describe("socket-events", () => {
         ["schedule:updated", { schedule: { id: "s1" } }],
         ["schedule:deleted", { scheduleId: "s1" }],
       ]);
+    });
+  });
+
+  test("[positive] event notifikasi cuma dikirim ke room notification, bukan broadcast", () => {
+    jest.isolateModules(() => {
+      const room = { emit: jest.fn() };
+      const io = { emit: jest.fn(), to: jest.fn(() => room) };
+      jest.doMock("../../../src/frameworks/webserver/socket", () => ({ getIO: () => io }));
+      const ev = require("../../../src/frameworks/webserver/socket-events");
+
+      ev.emitNotificationCreated({ id: "n1" });
+      ev.emitNotificationPatch({ id: "n1" });
+
+      expect(io.to).toHaveBeenCalledWith("notification");
+      expect(room.emit.mock.calls).toEqual([
+        ["notif:created", { notif: { id: "n1" } }],
+        ["notif:updated", { notif: { id: "n1" } }],
+      ]);
+      expect(io.emit).not.toHaveBeenCalled();
     });
   });
 
