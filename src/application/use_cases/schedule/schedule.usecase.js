@@ -259,8 +259,7 @@ async function assertNoScheduleConflict(data, excludeId = null) {
  */
 function assertScheduleRules({ repeatType, repeatDays, startTime, endTime }) {
   if (
-    repeatType === "weekly" &&
-    !(Array.isArray(repeatDays) && repeatDays.length > 0)
+    repeatType === "weekly" && (!Array.isArray(repeatDays) || repeatDays.length === 0)
   ) {
     throw httpError("Jadwal mingguan wajib memilih minimal satu hari", 400);
   }
