@@ -1,3 +1,5 @@
+import logger from "../../frameworks/helpers/logger";
+
 const { prisma } = require("../../frameworks/database/prismaClient");
 const { getRedisClient } = require("../../frameworks/tools/redisClient");
 const { listApplications } = require("../../frameworks/chirpstack/client");
@@ -56,7 +58,10 @@ async function healthCheck(req, res) {
     result.redis === "ok" &&
     result.chirpstack === "ok";
 
-  console.log("GASKUY")
+  logger.info(`[HealthCheck: Database Connected "${result.database}"]`)
+  logger.info(`[HealthCheck: Redis Connected "${result.redis}"]`)
+  logger.info(`[HealthCheck: Chirpstack Connected "${result.chirpstack}"]`)
+  
   res.status(allOk ? 200 : 503).json(result);
 }
 
