@@ -119,6 +119,37 @@ async function processMinute(minuteDate) {
       }
     }
 
+    const isUpcoming =
+      schedule.repeatType === "weekly" &&
+      (endTrigger || (schedule.endTime && endTrigger));
+
+    const isActive =
+      schedule.repeatType === "weekly" &&
+      (startTrigger || (schedule.startTime && startTrigger));
+
+    logger.info(`[Scheduler] isupcoming "${isUpcoming}"`)
+    logger.info(`[Scheduler] isActive "${isActive}"`)
+
+    if (isUpcoming) {
+      await prisma.schedule.update({
+        where: { id: schedule.id },
+        data: { status: "upcoming" },
+      });
+      logger.info(
+        `[Scheduler] Schedule "${schedule.id}" status diubah ke "upcoming"`,
+      );
+    }
+
+    if (isActive) {
+      await prisma.schedule.update({
+        where: { id: schedule.id },
+        data: { status: "active" },
+      });
+      logger.info(
+        `[Scheduler] Schedule "${schedule.id}" status diubah ke "active"`,
+      );
+    }
+
     logger.info(
       `[Scheduler] Schedule "${schedule.id}" dieksekusi (${targets.length} device, action: ${action}, trigger: ${endTrigger ? "endTime" : "startTime"})`,
     );
@@ -163,6 +194,8 @@ async function expireMissedSchedules(now) {
     `[Scheduler] ${expiredIds.length} schedule expired tanpa sempat dieksekusi (kemungkinan server down/kelewat catch-up), ditandain "completed": ${expiredIds.join(", ")}`,
   );
 }
+
+
 
 /**
  * Processor job scheduler: ngecek semua menit yang belom dicek, terus nyimpen
