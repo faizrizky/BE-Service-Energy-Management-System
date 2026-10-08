@@ -1,4 +1,4 @@
-import logger from "../../frameworks/helpers/logger";
+const { logger }  = require("../../frameworks/helpers/logger");
 
 const { prisma } = require("../../frameworks/database/prismaClient");
 const { getRedisClient } = require("../../frameworks/tools/redisClient");
