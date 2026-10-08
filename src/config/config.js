@@ -75,6 +75,10 @@ const config = {
     password: process.env.MQTT_PASSWORD || undefined,
     clientId: process.env.MQTT_CLIENT_ID || "ems-backend",
   },
+
+  notification: {
+    timezone: process.env.NOTIFICATION_TIMEZONE || "Asia/Jakarta",
+  },
 };
 
 /**
