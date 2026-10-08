@@ -43,12 +43,19 @@ function buildStatusWhere(status) {
 
   const todayStart = getTodayInScheduleZone();
 
-  if (status === "upcoming") {
-    return {
-      status: "active",
-      scheduledDate: { gt: todayStart },
-    };
-  }
+  // if (status === "upcoming") {
+  //   return {
+  //     status: "active",
+  //     scheduledDate: { gt: todayStart },
+  //   };
+  // }
+
+    if (status === "upcoming") {
+      return {
+        status: "upcoming",
+        scheduledDate: todayStart,
+      };
+    }
 
   return {
     status: "active",
