@@ -57,10 +57,6 @@ async function healthCheck(req, res) {
     result.database === "ok" &&
     result.redis === "ok" &&
     result.chirpstack === "ok";
-
-  logger.info(`[HealthCheck: Database Connected "${result.database}"]`)
-  logger.info(`[HealthCheck: Redis Connected "${result.redis}"]`)
-  logger.info(`[HealthCheck: Chirpstack Connected "${result.chirpstack}"]`)
   
   res.status(allOk ? 200 : 503).json(result);
 }

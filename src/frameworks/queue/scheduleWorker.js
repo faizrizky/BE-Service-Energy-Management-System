@@ -73,7 +73,7 @@ async function processMinute(minuteDate) {
 
   const candidates = await prisma.schedule.findMany({
     where: {
-      status: "active",
+      status: { in: ["active", "upcoming"] },
       OR: [{ startTime: currentTime }, { endTime: currentTime }],
     },
     include: {
@@ -119,35 +119,26 @@ async function processMinute(minuteDate) {
       }
     }
 
-    const isUpcoming =
-      schedule.repeatType === "weekly" &&
-      (endTrigger || (schedule.endTime && endTrigger));
-
-    const isActive =
-      schedule.repeatType === "weekly" &&
-      (startTrigger || (schedule.startTime && startTrigger));
+    const isUpcoming = schedule.repeatType === "weekly" && endTrigger;
+    const isActive = schedule.repeatType === "weekly" && startTrigger;
 
     logger.info(`[Scheduler] isupcoming "${isUpcoming}"`)
     logger.info(`[Scheduler] isActive "${isActive}"`)
 
-    if (isUpcoming) {
-      await prisma.schedule.update({
-        where: { id: schedule.id },
-        data: { status: "upcoming" },
-      });
-      logger.info(
-        `[Scheduler] Schedule "${schedule.id}" status diubah ke "upcoming"`,
-      );
-    }
-
     if (isActive) {
-      await prisma.schedule.update({
+      await prisma.schedule.update({ 
         where: { id: schedule.id },
         data: { status: "active" },
       });
-      logger.info(
-        `[Scheduler] Schedule "${schedule.id}" status diubah ke "active"`,
-      );
+
+      logger.info(`[Scheduler] Schedule Id: "${schedule.id}", Schedule Name: "${schedule.name}" status diubah ke "active"`);
+    } else if (isUpcoming) {
+        await prisma.schedule.update({
+          where: { id: schedule.id },
+          data: { status: "upcoming" },
+        });
+
+        logger.info(`[Scheduler] Schedule "${schedule.id}", Schedule Name: "${schedule.name}" status diubah ke "upcoming"`);
     }
 
     logger.info(

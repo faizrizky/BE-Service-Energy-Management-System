@@ -304,6 +304,10 @@ async function createSchedule(data, userId) {
   const repeatType = data.repeatType || "none";
   const endTime = data.endTime || null;
 
+  // [TEMP] Check
+  const currentClock = new Date(Date.now())
+  const currentHourseMinute = currentClock.getHours() + ":" + currentClock.getMinutes()
+
   assertScheduleRules({
     repeatType,
     repeatDays: data.repeatDays,
@@ -324,21 +328,43 @@ async function createSchedule(data, userId) {
     repeatDays: data.repeatDays,
   });
 
-  const schedule = await prisma.schedule.create({
-    data: {
-      name: data.name,
-      description: data.description || null,
-      roomId: data.roomId,
-      action: data.action,
-      scheduledDate,
-      startTime: data.startTime,
-      endTime,
-      repeatType,
-      repeatDays: data.repeatDays || undefined,
-      createdById: userId,
-    },
-    include: SCHEDULE_INCLUDE,
-  });
+  let schedule;
+
+  if (data.startTime > currentHourseMinute) {
+    schedule = await prisma.schedule.create({
+      data: {
+        name: data.name,
+        description: data.description || null,
+        roomId: data.roomId,
+        action: data.action,
+        scheduledDate,
+        startTime: data.startTime,
+        endTime,
+        repeatType,
+        repeatDays: data.repeatDays || undefined,
+        createdById: userId,
+        status: "upcoming"
+      },
+      include: SCHEDULE_INCLUDE,
+    });
+  } else {
+    schedule = await prisma.schedule.create({
+      data: {
+        name: data.name,
+        description: data.description || null,
+        roomId: data.roomId,
+        action: data.action,
+        scheduledDate,
+        startTime: data.startTime,
+        endTime,
+        repeatType,
+        repeatDays: data.repeatDays || undefined,
+        createdById: userId,
+      },
+      include: SCHEDULE_INCLUDE,
+    });
+  }
+
   const created = withActivity(schedule);
   emitScheduleCreated(created);
   return created;
