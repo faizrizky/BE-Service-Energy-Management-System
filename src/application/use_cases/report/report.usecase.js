@@ -1,7 +1,6 @@
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { config } = require("../../../config/config");
 const {
-  getTodayInScheduleZone,
   getScheduleActivity,
 } = require("../schedule/schedule-time.util");
 const { isDeviceOnline } = require("../device/device-online.util");
@@ -469,21 +468,15 @@ async function getTopRiskyRooms(range) {
 }
 
 /**
- * List maks 20 schedule yang aktif (berulang atau udah mulai) atau upcoming
- * (sekali jalan di masa depan), formatnya buat kartu dashboard.
+ * List maks 20 schedule yang lagi jalan (active) atau nunggu kemunculan
+ * berikutnya (upcoming, lihat computeScheduleStatus), formatnya buat kartu
+ * dashboard.
  *
  * Dipake di: report.controller.js → activeSchedules (GET
  *   /api/dashboard/schedules).
  */
 async function getActiveSchedules(status) {
-  const todayStart = getTodayInScheduleZone();
-
-  const where = { status: "active" };
-  if (status === "upcoming") {
-    where.scheduledDate = { gt: todayStart };
-  } else {
-    where.scheduledDate = { lte: todayStart };
-  }
+  const where = { status: status === "upcoming" ? "upcoming" : "active" };
 
   const schedules = await prisma.schedule.findMany({
     where,

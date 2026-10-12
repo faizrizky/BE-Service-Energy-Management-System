@@ -115,11 +115,53 @@ function getZonedParts(date, timeZone = config.schedule.timezone) {
  * Tanggal hari ini menurut zona waktu schedule (format toDateOnly), buat
  * misahin schedule yang udah jalan sama yang upcoming.
  *
- * Dipake di: schedule.usecase.js → buildStatusWhere, report.usecase.js →
- *   getActiveSchedules.
+ * Dipake di: schedule.usecase.js → updateSchedule.
  */
 function getTodayInScheduleZone(now = new Date()) {
   return getZonedParts(now).date;
+}
+
+/**
+ * Status schedule yang masih jalan (belom completed) dan bisa berubah sendiri
+ * seiring waktu. Disimpen di kolom status, di-sync tiap menit sama worker.
+ */
+const OPEN_SCHEDULE_STATUSES = ["active", "upcoming"];
+
+/**
+ * Nentuin schedule lagi di jendela jalannya (active) atau nunggu kemunculan
+ * berikutnya (upcoming), di zona waktu schedule:
+ * - active: jalan hari ini, startTime udah nyampe, dan endTime belom nyampe
+ *   (tanpa endTime = active sampe ganti hari). Yang nyebrang tengah malem
+ *   masih active besoknya sampe endTime.
+ * - upcoming: sisanya, termasuk yang nggak jalan hari ini (misal weekly
+ *   Sabtu+Minggu pas hari Jumat) atau endTime-nya udah lewat.
+ *
+ * Dipake di: schedule.usecase.js → createSchedule, updateSchedule,
+ *   scheduleWorker.js → syncScheduleStatuses.
+ */
+function computeScheduleStatus(
+  schedule,
+  now = new Date(),
+  timeZone = config.schedule.timezone,
+) {
+  const { date, time } = getZonedParts(now, timeZone);
+  const { startTime, endTime } = schedule;
+
+  if (isOccurringOnDate(schedule, date) && startTime <= time) {
+    if (!endTime || isCrossMidnight(schedule) || time < endTime) {
+      return "active";
+    }
+  }
+
+  if (
+    isCrossMidnight(schedule) &&
+    time < endTime &&
+    isOccurringOnDate(schedule, addDays(date, -1))
+  ) {
+    return "active";
+  }
+
+  return "upcoming";
 }
 
 /**
@@ -338,6 +380,8 @@ module.exports = {
   addDays,
   getZonedParts,
   getTodayInScheduleZone,
+  OPEN_SCHEDULE_STATUSES,
+  computeScheduleStatus,
   isCrossMidnight,
   getOccupiedDates,
   getScheduleStartDate,
