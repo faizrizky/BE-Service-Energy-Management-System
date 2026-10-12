@@ -287,12 +287,12 @@ describe("getActiveSchedules", () => {
     repeatType: "daily",
   };
 
-  test("[positive] status 'active' -> aktif & scheduledDate udah nyampe/lewat, mapping deviceCount dari room", async () => {
+  test("[positive] status 'active' -> filter kolom status, mapping deviceCount dari room", async () => {
     prisma.schedule.findMany.mockResolvedValue([schedule]);
     const [row] = await report.getActiveSchedules("active");
 
     const { where, take } = prisma.schedule.findMany.mock.calls[0][0];
-    expect(where).toEqual({ status: "active", scheduledDate: { lte: expect.any(Date) } });
+    expect(where).toEqual({ status: "active" });
     expect(take).toBe(20);
     expect(row).toMatchObject({
       id: "s1",
@@ -305,13 +305,13 @@ describe("getActiveSchedules", () => {
     });
   });
 
-  test("[positive] status 'upcoming' -> scheduledDate di masa depan, apa pun repeatType-nya", async () => {
+  test("[positive] status 'upcoming' -> filter kolom status", async () => {
     prisma.schedule.findMany.mockResolvedValue([
       { ...schedule, endTime: null, repeatType: "none" },
     ]);
     const [row] = await report.getActiveSchedules("upcoming");
     const { where } = prisma.schedule.findMany.mock.calls[0][0];
-    expect(where).toEqual({ status: "active", scheduledDate: { gt: expect.any(Date) } });
+    expect(where).toEqual({ status: "upcoming" });
     expect(row).toMatchObject({
       time: "08:00",
       repeat: false,
@@ -322,7 +322,7 @@ describe("getActiveSchedules", () => {
   test("[negative] status tidak dikenal diperlakukan sebagai 'active'", async () => {
     prisma.schedule.findMany.mockResolvedValue([]);
     await report.getActiveSchedules("whatever");
-    expect(prisma.schedule.findMany.mock.calls[0][0].where.scheduledDate.lte).toBeInstanceOf(Date);
+    expect(prisma.schedule.findMany.mock.calls[0][0].where).toEqual({ status: "active" });
   });
 });
 

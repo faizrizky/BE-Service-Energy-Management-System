@@ -9,7 +9,14 @@ const {
   isStartDue,
   isEndDue,
   isScheduleExpired,
+  computeScheduleStatus,
+  getScheduleActivity,
+  OPEN_SCHEDULE_STATUSES,
 } = require("../../application/use_cases/schedule/schedule-time.util");
+const {
+  SCHEDULE_INCLUDE,
+} = require("../../application/use_cases/schedule/schedule.usecase");
+const { emitScheduleUpdated } = require("../webserver/socket-events");
 
 const connection = {
   host: config.redis.host,
@@ -73,7 +80,7 @@ async function processMinute(minuteDate) {
 
   const candidates = await prisma.schedule.findMany({
     where: {
-      status: { in: ["active", "upcoming"] },
+      status: { in: OPEN_SCHEDULE_STATUSES },
       OR: [{ startTime: currentTime }, { endTime: currentTime }],
     },
     include: {
@@ -119,28 +126,6 @@ async function processMinute(minuteDate) {
       }
     }
 
-    const isUpcoming = schedule.repeatType === "weekly" && endTrigger;
-    const isActive = schedule.repeatType === "weekly" && startTrigger;
-
-    logger.info(`[Scheduler] isupcoming "${isUpcoming}"`)
-    logger.info(`[Scheduler] isActive "${isActive}"`)
-
-    if (isActive) {
-      await prisma.schedule.update({ 
-        where: { id: schedule.id },
-        data: { status: "active" },
-      });
-
-      logger.info(`[Scheduler] Schedule Id: "${schedule.id}", Schedule Name: "${schedule.name}" status diubah ke "active"`);
-    } else if (isUpcoming) {
-        await prisma.schedule.update({
-          where: { id: schedule.id },
-          data: { status: "upcoming" },
-        });
-
-        logger.info(`[Scheduler] Schedule "${schedule.id}", Schedule Name: "${schedule.name}" status diubah ke "upcoming"`);
-    }
-
     logger.info(
       `[Scheduler] Schedule "${schedule.id}" dieksekusi (${targets.length} device, action: ${action}, trigger: ${endTrigger ? "endTime" : "startTime"})`,
     );
@@ -166,7 +151,7 @@ async function expireMissedSchedules(now) {
   const today = getZonedParts(now, timeZone).date;
 
   const candidates = await prisma.schedule.findMany({
-    where: { status: "active", repeatType: "none" },
+    where: { status: { in: OPEN_SCHEDULE_STATUSES }, repeatType: "none" },
     select: { id: true, scheduledDate: true, startTime: true, endTime: true },
   });
 
@@ -189,6 +174,53 @@ async function expireMissedSchedules(now) {
 
 
 /**
+ * Samain kolom status schedule yang masih jalan sama computeScheduleStatus
+ * (active pas di jendela startTime-endTime hari kemunculannya, upcoming di
+ * luar itu), terus ngirim schedule:updated biar frontend pindahin tab-nya
+ * otomatis. Jalan abis processMinute & expireMissedSchedules, jadi yang udah
+ * completed nggak kesentuh.
+ *
+ * Dipake di: executeDueSchedules (file ini).
+ */
+async function syncScheduleStatuses(now) {
+  const candidates = await prisma.schedule.findMany({
+    where: { status: { in: OPEN_SCHEDULE_STATUSES } },
+    select: {
+      id: true,
+      status: true,
+      scheduledDate: true,
+      startTime: true,
+      endTime: true,
+      repeatType: true,
+      repeatDays: true,
+    },
+  });
+
+  const changes = candidates
+    .map((schedule) => ({
+      id: schedule.id,
+      from: schedule.status,
+      to: computeScheduleStatus(schedule, now),
+    }))
+    .filter(({ from, to }) => from !== to);
+
+  for (const { id, from, to } of changes) {
+    const updated = await prisma.schedule.update({
+      where: { id },
+      data: { status: to },
+      include: SCHEDULE_INCLUDE,
+    });
+    emitScheduleUpdated({
+      ...updated,
+      activity: getScheduleActivity(updated),
+    });
+    logger.info(
+      `[Scheduler] Schedule "${id}" (${updated.name}) status ${from} -> ${to}`,
+    );
+  }
+}
+
+/**
  * Processor job scheduler: ngecek semua menit yang belom dicek, terus nyimpen
  * waktu cek terakhir (di memori).
  *
@@ -203,6 +235,7 @@ async function executeDueSchedules() {
   }
 
   await expireMissedSchedules(now);
+  await syncScheduleStatuses(now);
 
   lastCheckedAt = now;
 }
@@ -226,4 +259,8 @@ function startScheduleWorker() {
   return worker;
 }
 
-module.exports = { startScheduleWorker, executeDueSchedules };
+module.exports = {
+  startScheduleWorker,
+  executeDueSchedules,
+  syncScheduleStatuses,
+};

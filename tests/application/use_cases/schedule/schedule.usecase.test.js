@@ -55,19 +55,13 @@ describe("listSchedulesPaginated", () => {
     expect(result).toEqual({ data: [], page: 1, rowsPerPage: 10, totalRows: 0, totalPages: 1 });
   });
 
-  test("[positive] status 'upcoming' -> aktif & scheduledDate di masa depan, apa pun repeatType-nya", async () => {
-    await scheduleUseCase.listSchedulesPaginated({ status: "upcoming" });
-    const [cond] = prisma.schedule.findMany.mock.calls[0][0].where.AND;
-    expect(cond.repeatType).toBeUndefined();
-    expect(cond).toEqual({ status: "active", scheduledDate: { gt: expect.any(Date) } });
-    expect(cond.scheduledDate.gt.getUTCHours()).toBe(0);
-  });
-
-  test("[positive] status 'active' -> aktif & scheduledDate udah nyampe/lewat, apa pun repeatType-nya", async () => {
-    await scheduleUseCase.listSchedulesPaginated({ status: "active" });
-    const [cond] = prisma.schedule.findMany.mock.calls[0][0].where.AND;
-    expect(cond).toEqual({ status: "active", scheduledDate: { lte: expect.any(Date) } });
-  });
+  test.each(["active", "upcoming"])(
+    "[positive] status '%s' -> filter langsung ke kolom status (di-sync worker)",
+    async (status) => {
+      await scheduleUseCase.listSchedulesPaginated({ status });
+      expect(prisma.schedule.findMany.mock.calls[0][0].where).toEqual({ AND: [{ status }] });
+    },
+  );
 
   test("[negative] status tidak dikenal diabaikan (bukan error)", async () => {
     await scheduleUseCase.listSchedulesPaginated({ status: "deleted" });
@@ -243,7 +237,9 @@ describe("createSchedule", () => {
 
     await scheduleUseCase.createSchedule(input({ description: "", endTime: "" }), "user-1");
 
-    expect(prisma.schedule.findMany).toHaveBeenCalledWith({ where: { status: "active", roomId: "room-1" } });
+    expect(prisma.schedule.findMany).toHaveBeenCalledWith({
+      where: { status: { in: ["active", "upcoming"] }, roomId: "room-1" },
+    });
     expect(prisma.schedule.create).toHaveBeenCalledWith({
       data: {
         name: "Jadwal AC",
@@ -256,6 +252,8 @@ describe("createSchedule", () => {
         repeatType: "none",
         repeatDays: undefined,
         createdById: "user-1",
+        // 2026-09-20 bukan hari ini -> belom di jendela jalannya
+        status: "upcoming",
       },
       include: SCHEDULE_INCLUDE,
     });
@@ -351,7 +349,7 @@ describe("updateSchedule", () => {
     await scheduleUseCase.updateSchedule("s1", { startTime: "14:00", endTime: "15:00", status: "completed" });
 
     expect(prisma.schedule.findMany).toHaveBeenCalledWith({
-      where: { status: "active", roomId: "room-1", id: { not: "s1" } },
+      where: { status: { in: ["active", "upcoming"] }, roomId: "room-1", id: { not: "s1" } },
     });
     expect(prisma.schedule.update).toHaveBeenCalledWith({
       where: { id: "s1" },
@@ -443,6 +441,46 @@ describe("updateSchedule", () => {
       await scheduleUseCase.updateSchedule("s1", { startTime: "14:00", scheduledDate: "2026-12-25" });
 
       expect(prisma.schedule.update.mock.calls[0][0].data.scheduledDate).toEqual(new Date("2026-12-25"));
+    });
+  });
+
+  describe("status dihitung ulang - jam sistem di-pin ke Senin 2026-09-22 08:00 WIB", () => {
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
+      jest.setSystemTime(new Date(2026, 8, 22, 8, 0, 0));
+      prisma.schedule.findMany.mockResolvedValue([]);
+      prisma.schedule.update.mockResolvedValue({ id: "s1" });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const statusSaved = () => prisma.schedule.update.mock.calls[0][0].data.status;
+
+    test("[positive] schedule masih jalan, repeatDays diganti ke Sabtu+Minggu -> upcoming", async () => {
+      prisma.schedule.findUnique.mockResolvedValue(
+        existing({ id: "s1", status: "active", repeatType: "weekly", repeatDays: [1], scheduledDate: new Date("2026-09-01"), startTime: "07:00", endTime: "09:00" }),
+      );
+      await scheduleUseCase.updateSchedule("s1", { repeatDays: [6, 0] });
+      expect(statusSaved()).toBe("upcoming");
+    });
+
+    test("[positive] startTime dimajuin ke jam sekarang di hari jalannya -> active", async () => {
+      prisma.schedule.findUnique.mockResolvedValue(
+        existing({ id: "s1", status: "upcoming", repeatType: "daily", scheduledDate: new Date("2026-09-01"), startTime: "10:00", endTime: "12:00" }),
+      );
+      await scheduleUseCase.updateSchedule("s1", { startTime: "08:00" });
+      expect(statusSaved()).toBe("active");
+    });
+
+    test("[positive] client kirim completed -> tetep completed", async () => {
+      prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1", status: "active" }));
+      await scheduleUseCase.updateSchedule("s1", { status: "completed" });
+      expect(statusSaved()).toBe("completed");
+    });
+
+    test("[negative] schedule udah completed & client nggak kirim status -> status nggak disentuh", async () => {
+      prisma.schedule.findUnique.mockResolvedValue(existing({ id: "s1", status: "completed" }));
+      await scheduleUseCase.updateSchedule("s1", { name: "Ganti nama" });
+      expect(statusSaved()).toBeUndefined();
     });
   });
 });

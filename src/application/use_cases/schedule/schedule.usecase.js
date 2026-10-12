@@ -5,6 +5,8 @@ const {
   timeRangesOverlap,
   occurrenceDatesOverlap,
   getTodayInScheduleZone,
+  OPEN_SCHEDULE_STATUSES,
+  computeScheduleStatus,
   resolveScheduledDate,
   getScheduleActivity,
   getZonedParts,
@@ -30,38 +32,6 @@ const SCHEDULE_INCLUDE = {
 
 const RECENT_ACTIVITY_LIMIT = 5;
 const RECENT_ACTIVITY_SCAN = 50;
-
-/**
- * Bikin filter Prisma buat status active (berulang atau udah mulai) atau
- * upcoming (sekali jalan setelah hari ini). "Hari ini" diitung di zona waktu
- * schedule. Balikin null buat status lain.
- *
- * Dipake di: listSchedulesPaginated (file ini).
- */
-function buildStatusWhere(status) {
-  if (status !== "active" && status !== "upcoming") return null;
-
-  const todayStart = getTodayInScheduleZone();
-
-  // if (status === "upcoming") {
-  //   return {
-  //     status: "active",
-  //     scheduledDate: { gt: todayStart },
-  //   };
-  // }
-
-    if (status === "upcoming") {
-      return {
-        status: "upcoming",
-        scheduledDate: todayStart,
-      };
-    }
-
-  return {
-    status: "active",
-    scheduledDate: { lte: todayStart },
-  };
-}
 
 /**
  * Tempelin ringkasan aksi schedule (lihat getScheduleActivity) biar frontend
@@ -165,8 +135,7 @@ async function listSchedulesPaginated(filter = {}) {
   const andConditions = [];
   if (roomId) andConditions.push({ roomId });
 
-  const statusWhere = buildStatusWhere(status);
-  if (statusWhere) andConditions.push(statusWhere);
+  if (OPEN_SCHEDULE_STATUSES.includes(status)) andConditions.push({ status });
 
   if (scheduledFrom || scheduledTo) {
     const scheduledDate = {};
@@ -221,7 +190,7 @@ async function listSchedulesPaginated(filter = {}) {
 async function assertNoScheduleConflict(data, excludeId = null) {
   const candidates = await prisma.schedule.findMany({
     where: {
-      status: "active",
+      status: { in: OPEN_SCHEDULE_STATUSES },
       roomId: data.roomId,
       ...(excludeId && { id: { not: excludeId } }),
     },
@@ -296,17 +265,14 @@ async function getScheduleById(id) {
 /**
  * Bikin schedule abis dicek nggak bentrok (endTime kosong disimpen null,
  * repeatType default none, scheduledDate dihitung otomatis kalo nggak
- * dikirim), terus ngirim event schedule:created.
+ * dikirim, status active/upcoming dari computeScheduleStatus), terus ngirim
+ * event schedule:created.
  *
  * Dipake di: schedule.controller.js → store (POST /api/schedules).
  */
 async function createSchedule(data, userId) {
   const repeatType = data.repeatType || "none";
   const endTime = data.endTime || null;
-
-  // [TEMP] Check
-  const currentClock = new Date(Date.now())
-  const currentHourseMinute = currentClock.getHours() + ":" + currentClock.getMinutes()
 
   assertScheduleRules({
     repeatType,
@@ -328,42 +294,28 @@ async function createSchedule(data, userId) {
     repeatDays: data.repeatDays,
   });
 
-  let schedule;
-
-  if (data.startTime > currentHourseMinute) {
-    schedule = await prisma.schedule.create({
-      data: {
-        name: data.name,
-        description: data.description || null,
-        roomId: data.roomId,
-        action: data.action,
+  const schedule = await prisma.schedule.create({
+    data: {
+      name: data.name,
+      description: data.description || null,
+      roomId: data.roomId,
+      action: data.action,
+      scheduledDate,
+      startTime: data.startTime,
+      endTime,
+      repeatType,
+      repeatDays: data.repeatDays || undefined,
+      createdById: userId,
+      status: computeScheduleStatus({
         scheduledDate,
         startTime: data.startTime,
         endTime,
         repeatType,
-        repeatDays: data.repeatDays || undefined,
-        createdById: userId,
-        status: "upcoming"
-      },
-      include: SCHEDULE_INCLUDE,
-    });
-  } else {
-    schedule = await prisma.schedule.create({
-      data: {
-        name: data.name,
-        description: data.description || null,
-        roomId: data.roomId,
-        action: data.action,
-        scheduledDate,
-        startTime: data.startTime,
-        endTime,
-        repeatType,
-        repeatDays: data.repeatDays || undefined,
-        createdById: userId,
-      },
-      include: SCHEDULE_INCLUDE,
-    });
-  }
+        repeatDays: data.repeatDays,
+      }),
+    },
+    include: SCHEDULE_INCLUDE,
+  });
 
   const created = withActivity(schedule);
   emitScheduleCreated(created);
@@ -417,6 +369,24 @@ async function updateSchedule(id, data) {
     id,
   );
 
+  // completed dari client tetep completed; active dari client (atau schedule
+  // yang emang masih jalan) diitung ulang jadi active/upcoming.
+  let status;
+  if (data.status === "completed") {
+    status = "completed";
+  } else if (
+    data.status === "active" ||
+    OPEN_SCHEDULE_STATUSES.includes(existing.status)
+  ) {
+    status = computeScheduleStatus({
+      scheduledDate,
+      startTime,
+      endTime,
+      repeatType,
+      repeatDays,
+    });
+  }
+
   const schedule = await prisma.schedule.update({
     where: { id },
     data: {
@@ -430,7 +400,7 @@ async function updateSchedule(id, data) {
       endTime: data.endTime === undefined ? undefined : data.endTime || null,
       repeatType: data.repeatType,
       repeatDays: data.repeatDays,
-      status: data.status,
+      status,
     },
     include: SCHEDULE_INCLUDE,
   });
@@ -451,6 +421,7 @@ async function deleteSchedule(id) {
 }
 
 module.exports = {
+  SCHEDULE_INCLUDE,
   listSchedulesPaginated,
   getScheduleById,
   createSchedule,
