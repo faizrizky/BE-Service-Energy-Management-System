@@ -14,6 +14,7 @@ const {
   isEndDue,
   getZonedParts,
   getTodayInScheduleZone,
+  computeScheduleStatus,
   resolveScheduledDate,
   isScheduleExpired,
   getScheduleActivity,
@@ -585,5 +586,59 @@ describe("isStartDue & isEndDue - zona waktu schedule", () => {
     const night = { repeatType: "none", scheduledDate: "2026-08-23", startTime: "23:00", endTime: "01:00" };
     // 2026-08-23T18:00Z = 24 Agustus 01:00 WIB
     expect(isEndDue(night, new Date("2026-08-23T18:00:00.000Z"), "Asia/Jakarta")).toBe(true);
+  });
+});
+
+describe("computeScheduleStatus", () => {
+  // jam WIB -> Date UTC. Jumat 9 Oktober 2026, Sabtu 10, Minggu 11.
+  const wib = (day, hhmm) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    return new Date(Date.UTC(2026, 9, day, h - 7, m));
+  };
+  const at = (schedule, day, hhmm) => computeScheduleStatus(schedule, wib(day, hhmm), "Asia/Jakarta");
+
+  const weekend = {
+    repeatType: "weekly",
+    repeatDays: [6, 0],
+    scheduledDate: new Date("2026-10-09"),
+    startTime: "08:00",
+    endTime: "10:00",
+  };
+
+  test.each([
+    ["Jumat 07:23, weekly Sabtu+Minggu -> bukan harinya", 9, "07:23", "upcoming"],
+    ["Jumat 08:30, weekly Sabtu+Minggu -> jam lewat tapi bukan harinya", 9, "08:30", "upcoming"],
+    ["Sabtu 07:59 -> startTime belom nyampe", 10, "07:59", "upcoming"],
+    ["Sabtu 08:00 -> pas startTime", 10, "08:00", "active"],
+    ["Sabtu 09:59 -> masih di jendela", 10, "09:59", "active"],
+    ["Sabtu 10:00 -> pas endTime, balik upcoming", 10, "10:00", "upcoming"],
+    ["Minggu 08:00 -> hari kedua", 11, "08:00", "active"],
+  ])("[positive] %s", (_, day, hhmm, expected) => {
+    expect(at(weekend, day, hhmm)).toBe(expected);
+  });
+
+  test("[positive] sekali jalan dibuat jam 07:23 buat jam 08:00 -> upcoming, jam 08:00 -> active", () => {
+    const once = { repeatType: "none", scheduledDate: new Date("2026-10-09"), startTime: "08:00", endTime: "09:00" };
+    expect(at(once, 9, "07:23")).toBe("upcoming");
+    expect(at(once, 9, "08:00")).toBe("active");
+  });
+
+  test("[positive] tanpa endTime -> active sampe ganti hari", () => {
+    const daily = { repeatType: "daily", scheduledDate: new Date("2026-10-01"), startTime: "08:00", endTime: null };
+    expect(at(daily, 9, "23:59")).toBe("active");
+    expect(at(daily, 10, "00:00")).toBe("upcoming");
+  });
+
+  test("[positive] nyebrang tengah malem -> active sampe endTime besoknya, walau besoknya bukan hari repeat", () => {
+    const night = { repeatType: "weekly", repeatDays: [5], scheduledDate: new Date("2026-10-01"), startTime: "23:00", endTime: "01:00" };
+    expect(at(night, 9, "22:59")).toBe("upcoming");
+    expect(at(night, 9, "23:30")).toBe("active");
+    expect(at(night, 10, "00:30")).toBe("active");
+    expect(at(night, 10, "01:00")).toBe("upcoming");
+  });
+
+  test("[negative] daily yang tanggal mulainya besok -> upcoming walau jamnya udah lewat", () => {
+    const daily = { repeatType: "daily", scheduledDate: new Date("2026-10-10"), startTime: "08:00", endTime: null };
+    expect(at(daily, 9, "12:00")).toBe("upcoming");
   });
 });

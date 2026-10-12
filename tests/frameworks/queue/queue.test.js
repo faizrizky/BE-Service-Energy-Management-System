@@ -6,11 +6,15 @@ jest.mock("../../../src/application/use_cases/device/device.usecase", () => ({
 jest.mock("../../../src/application/use_cases/report/report.usecase", () => ({
   pruneOldReadings: jest.fn(),
 }));
+jest.mock("../../../src/frameworks/webserver/socket-events", () => ({
+  emitScheduleUpdated: jest.fn(),
+}));
 
 const { prisma } = require("../../../src/frameworks/database/prismaClient");
 const logger = require("../../../src/frameworks/helpers/logger");
 const deviceUseCase = require("../../../src/application/use_cases/device/device.usecase");
 const { pruneOldReadings } = require("../../../src/application/use_cases/report/report.usecase");
+const { emitScheduleUpdated } = require("../../../src/frameworks/webserver/socket-events");
 const { resetPrismaMock } = require("../../helpers/prisma");
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -228,16 +232,20 @@ describe("scheduleWorker", () => {
   }
 
   // processMinute nge-query pake `include` (room+devices), expireMissedSchedules
-  // pake `select` (id/scheduledDate/startTime/endTime) -> dibedain lewat itu,
-  // biar satu mock findMany bisa jawab dua query yang beda bentuk dalam satu tick.
-  function mockScheduleQueries({ due = [], expiredCandidates = [] } = {}) {
-    prisma.schedule.findMany.mockImplementation((args) =>
-      Promise.resolve(args.select ? expiredCandidates : due),
-    );
+  // pake `select` tanpa status, syncScheduleStatuses pake `select` yang ada
+  // status -> dibedain lewat itu, biar satu mock findMany bisa jawab tiga query
+  // yang beda bentuk dalam satu tick.
+  const isSyncQuery = (args) => Boolean(args.select && args.select.status);
+  function mockScheduleQueries({ due = [], expiredCandidates = [], openSchedules = [] } = {}) {
+    prisma.schedule.findMany.mockImplementation((args) => {
+      if (isSyncQuery(args)) return Promise.resolve(openSchedules);
+      return Promise.resolve(args.select ? expiredCandidates : due);
+    });
   }
 
   const processMinuteCalls = () => prisma.schedule.findMany.mock.calls.filter((c) => c[0].include);
-  const expireSweepCalls = () => prisma.schedule.findMany.mock.calls.filter((c) => c[0].select);
+  const expireSweepCalls = () =>
+    prisma.schedule.findMany.mock.calls.filter((c) => c[0].select && !isSyncQuery(c[0]));
 
   beforeEach(() => {
     jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
@@ -269,7 +277,7 @@ describe("scheduleWorker", () => {
     setNow(at(8, 0));
     mockScheduleQueries({ due: [schedule()] });
     await worker.executeDueSchedules();
-    expect(processMinuteCalls()[0][0].where).toEqual({ status: "active", OR: [{ startTime: "08:00" }, { endTime: "08:00" }] });
+    expect(processMinuteCalls()[0][0].where).toEqual({ status: { in: ["active", "upcoming"] }, OR: [{ startTime: "08:00" }, { endTime: "08:00" }] });
     expect(deviceUseCase.powerDevice.mock.calls.map((c) => c[0])).toEqual(["d1", "d2"]);
     expect(deviceUseCase.powerDevice).toHaveBeenCalledWith("d1", "on", { scheduleId: "s1", skipIfOffline: true });
     expect(prisma.schedule.update).not.toHaveBeenCalled();
@@ -381,7 +389,7 @@ describe("scheduleWorker", () => {
       });
       await worker.executeDueSchedules();
       expect(expireSweepCalls()[0][0]).toEqual({
-        where: { status: "active", repeatType: "none" },
+        where: { status: { in: ["active", "upcoming"] }, repeatType: "none" },
         select: { id: true, scheduledDate: true, startTime: true, endTime: true },
       });
       expect(prisma.schedule.updateMany).toHaveBeenCalledWith({
@@ -428,6 +436,69 @@ describe("scheduleWorker", () => {
         where: { id: { in: ["exp-1"] } },
         data: { status: "completed" },
       });
+    });
+  });
+
+  describe("syncScheduleStatuses - status active/upcoming diubah worker pas kondisinya nyampe", () => {
+    // at() = Senin 14 September 2026 (WIB)
+    const open = (overrides = {}) => ({
+      id: "s1",
+      status: "upcoming",
+      repeatType: "daily",
+      repeatDays: null,
+      scheduledDate: new Date("2026-09-01"),
+      startTime: "08:00",
+      endTime: "10:00",
+      ...overrides,
+    });
+    const syncUpdates = () => prisma.schedule.update.mock.calls.filter((c) => c[0].data.status !== "completed");
+
+    beforeEach(() => {
+      prisma.schedule.update.mockImplementation(({ where, data }) =>
+        Promise.resolve({ id: where.id, name: "Jadwal AC", action: "on", endTime: "10:00", ...data }),
+      );
+    });
+
+    test("[positive] startTime nyampe -> upcoming jadi active + emit schedule:updated (lengkap sama activity)", async () => {
+      setNow(at(8, 0));
+      mockScheduleQueries({ openSchedules: [open()] });
+      await worker.executeDueSchedules();
+
+      expect(syncUpdates()).toHaveLength(1);
+      expect(syncUpdates()[0][0]).toMatchObject({ where: { id: "s1" }, data: { status: "active" } });
+      expect(emitScheduleUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "s1", status: "active", activity: { start: "on", end: "off" } }),
+      );
+    });
+
+    test("[positive] endTime lewat -> active balik jadi upcoming", async () => {
+      setNow(at(10, 0));
+      mockScheduleQueries({ openSchedules: [open({ status: "active" })] });
+      await worker.executeDueSchedules();
+      expect(syncUpdates()[0][0].data).toEqual({ status: "upcoming" });
+    });
+
+    test("[negative] weekly Sabtu+Minggu di hari Senin -> tetep upcoming walau jamnya udah lewat, nggak di-update", async () => {
+      setNow(at(9, 0));
+      mockScheduleQueries({ openSchedules: [open({ repeatType: "weekly", repeatDays: [6, 0] })] });
+      await worker.executeDueSchedules();
+      expect(syncUpdates()).toHaveLength(0);
+      expect(emitScheduleUpdated).not.toHaveBeenCalled();
+    });
+
+    test("[negative] status udah bener -> nggak ada update/emit", async () => {
+      setNow(at(9, 0));
+      mockScheduleQueries({ openSchedules: [open({ status: "active" })] });
+      await worker.executeDueSchedules();
+      expect(syncUpdates()).toHaveLength(0);
+      expect(emitScheduleUpdated).not.toHaveBeenCalled();
+    });
+
+    test("[positive] cuma ngambil schedule yang masih active/upcoming (completed nggak disentuh)", async () => {
+      setNow(at(9, 0));
+      await worker.executeDueSchedules();
+      const syncCall = prisma.schedule.findMany.mock.calls.find((c) => c[0].select && c[0].select.status);
+      expect(syncCall[0].where).toEqual({ status: { in: ["active", "upcoming"] } });
     });
   });
 });
