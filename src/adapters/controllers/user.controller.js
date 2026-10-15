@@ -90,7 +90,7 @@ async function update(req, res, next) {
     await createNotification({
       data: userShow,
       eventType: "success",
-      message: `User "${userShow?.fullname}" has been Updated`,
+      message: `User "${userShow?.fullName}" has been Updated`,
       readAt: "false",
     });
 
