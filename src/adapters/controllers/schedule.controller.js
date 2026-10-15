@@ -91,10 +91,20 @@ async function store(req, res, next) {
  */
 async function update(req, res, next) {
   try {
+    const scheduleShow = await scheduleUseCase.getScheduleById(req.params.id);
+
+    await createNotification({
+      data: scheduleShow,
+      eventType: "success",
+      message: `Schedule "${scheduleShow.name}" has been Updated`,
+      readAt: "false"
+    })
+
     const schedule = await scheduleUseCase.updateSchedule(
       req.params.id,
       req.body,
     );
+
     res.json({ data: schedule });
   } catch (err) {
     next(err);
@@ -110,7 +120,17 @@ async function update(req, res, next) {
  */
 async function destroy(req, res, next) {
   try {
+    const scheduleShow = await scheduleUseCase.getScheduleById(req.params.id);
+
+    await createNotification({
+      data: scheduleShow,
+      eventType: "success",
+      message: `Schedule "${scheduleShow.name}" has been Deleted`,
+      readAt: "false"
+    })
+
     await scheduleUseCase.deleteSchedule(req.params.id);
+
     res.status(204).send();
   } catch (err) {
     next(err);

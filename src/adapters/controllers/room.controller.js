@@ -191,7 +191,17 @@ async function store(req, res, next) {
  */
 async function update(req, res, next) {
   try {
+    const roomShow = await roomUseCase.getRoomById(req.params.id);
+    
+    await createNotification({
+      data: roomShow,
+      eventType: "success",
+      message: `Room Name "${roomShow.name}", Location "${roomShow?.location}" has been Updated`,
+      readAt: "false"
+    })
+    
     const room = await roomUseCase.updateRoom(req.params.id, req.body);
+
     res.json({ data: room });
   } catch (err) {
     next(err);
@@ -207,6 +217,15 @@ async function update(req, res, next) {
  */
 async function destroy(req, res, next) {
   try {
+    const roomShow = await roomUseCase.getRoomById(req.params.id);
+    
+    await createNotification({
+      data: roomShow,
+      eventType: "success",
+      message: `Room Name "${roomShow.name}", Location "${roomShow?.location}" has been Deleted`,
+      readAt: "false"
+    })
+    
     await roomUseCase.deleteRoom(req.params.id);
     res.status(204).send();
   } catch (err) {

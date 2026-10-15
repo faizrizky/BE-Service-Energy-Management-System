@@ -74,6 +74,15 @@ async function store(req, res, next) {
  */
 async function update(req, res, next) {
   try {
+    const roleShow = await roleUseCase.getRoleById(req.params.id);
+
+    await createNotification({
+      data: roleShow,
+      eventType: "success",
+      message: `Room Name "${roleShow.name}" has been Updated`,
+      readAt: "false"
+    })
+
     const role = await roleUseCase.updateRole(req.params.id, req.body);
     res.json({ data: role });
   } catch (err) {
@@ -90,7 +99,20 @@ async function update(req, res, next) {
  */
 async function destroy(req, res, next) {
   try {
-    await roleUseCase.deleteRole(req.params.id);
+    const roleShow = await roleUseCase.getRoleById(req.params.id);
+
+    if (roleShow?.isSystem) {
+      return res.status(403).json({ message: `This Role: "${roleShow?.name}" System, Can't Be Deleted` });
+    } else {
+      await createNotification({
+        data: roleShow,
+        eventType: "success",
+        message: `Room Name "${roleShow.name}" has been Updated`,
+        readAt: "false"
+      })
+
+      await roleUseCase.deleteRole(req.params.id);
+    }
     res.status(204).send();
   } catch (err) {
     next(err);
