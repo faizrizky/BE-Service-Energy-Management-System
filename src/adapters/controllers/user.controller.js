@@ -85,6 +85,15 @@ async function store(req, res, next) {
  */
 async function update(req, res, next) {
   try {
+    const userShow = await userUseCase.getUserById(req.params.id);
+
+    await createNotification({
+      data: userShow,
+      eventType: "success",
+      message: `User "${userShow?.fullname}" has been Updated`,
+      readAt: "false",
+    });
+
     const user = await userUseCase.updateUser(req.params.id, req.body);
     res.json({ data: user });
   } catch (err) {
@@ -101,7 +110,20 @@ async function update(req, res, next) {
  */
 async function destroy(req, res, next) {
   try {
-    await userUseCase.deleteUser(req.params.id, req.user.id);
+    const userShow = await userUseCase.getUserById(req.params.id);
+
+    if (userShow?.username === "admin" || userShow?.role?.name === "Administrator") {
+      return res.status(403).json({ message: `User '${userShow?.fullName}' Can't Be Deleted` });
+    } else {
+      await createNotification({
+        data: userShow,
+        eventType: "success",
+        message: `User "${userShow?.fullName}" has been Deleted`,
+        readAt: "false",
+      });
+
+      await userUseCase.deleteUser(req.params.id, req.user.id);
+    }
     res.status(204).send();
   } catch (err) {
     next(err);
