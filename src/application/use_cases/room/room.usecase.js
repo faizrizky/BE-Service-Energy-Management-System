@@ -528,20 +528,33 @@ async function getRoomStats() {
  * Dipake di: room.controller.js → store (POST /api/rooms).
  */
 async function createRoom(data) {
-  const room = await prisma.room.create({
-    data: {
-      name: data.name,
-      picName: data.picName,
-      picPhone: data.picPhone,
-      picUserId: data.picUserId,
-      location: data.location,
-      description: data.description,
-      imageUrl: data.imageUrl,
-      isCritical: data.isCritical || false,
-    },
+  const roomCheck = await prisma.room.findFirst({
+    where: { name: data?.name },
+    select: { name: true },
   });
-  emitRoomCreated(room);
-  return room;
+
+  if (roomCheck === null) {
+    const room = await prisma.room.create({
+      data: {
+        name: data.name,
+        picName: data.picName,
+        picPhone: data.picPhone,
+        picUserId: data.picUserId,
+        location: data.location,
+        description: data.description,
+        imageUrl: data.imageUrl,
+        isCritical: data.isCritical || false,
+      },
+    });
+    emitRoomCreated(room);
+    return room;
+  } else {
+    throw httpError(
+      `Room tidak bisa ditambah karena sudah dimiliki '${roomCheck?.name}'. ` +
+        "Ganti Nama Roomnya tersebut terlebih dahulu. Baru Coba Tambah Kembali",
+      409,
+    );
+  }
 }
 
 /**
