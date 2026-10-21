@@ -85,6 +85,13 @@ module.exports = {
   emitDeviceCommand: (payload) => emit("device:command", payload),
 
   /**
+   * Event List Device
+   * @param {*} data
+   * @returns 
+   */
+  emitDeviceListTabel: (data) => emit("device:list", data),
+
+  /**
    * Event room:created abis room dibikin.
    *
    * Dipake di:
@@ -121,6 +128,13 @@ module.exports = {
   emitRoomPower: (roomId, results) => emit("room:power", { roomId, results }),
 
   /**
+   * Event room:list 
+   * @param {*} data 
+   * @returns 
+  */
+  emitRoomListTabel: (data) => emit("room:list", data),
+
+  /**
    * Event gateway:created abis gateway dibikin.
    *
    * Dipake di:
@@ -148,6 +162,13 @@ module.exports = {
   emitGatewayDeleted: (gatewayId) => emit("gateway:deleted", { gatewayId }),
 
   /**
+   * Event gateway:list
+   * @param {*} data 
+   * @returns 
+   */
+  emitGatewayListTabel: (data) => emit("gateway:list", data),
+
+  /**
    * Event schedule:created abis schedule dibikin.
    *
    * Dipake di:
@@ -173,6 +194,17 @@ module.exports = {
    * - Frontend: halaman Schedule & Dashboard.
    */
   emitScheduleDeleted: (scheduleId) => emit("schedule:deleted", { scheduleId }),
+
+  /**
+   * Event Schedule List Data
+   * @param {*} data 
+   * @returns 
+  */
+  emitScheduleListTabel: (data) => emit("schedule:list", data),
+
+  emitRoleListTabel: (data) => emit("role:list", data),
+  emitUserListTabel: (data) => emit("user:list", data),
+
 
   /**
    * Event notif:created abis notification dibikin.
