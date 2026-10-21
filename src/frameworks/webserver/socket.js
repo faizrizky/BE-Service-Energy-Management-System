@@ -4,6 +4,11 @@ const { config } = require("../../config/config");
 const logger = require("../helpers/logger");
 const { isSessionRevoked } = require("../helpers/sessionRevocation");
 const { roleHasPermission } = require("./middlewares/rbacMiddleware");
+const userListPaginate = require("./socket/handler/users/paginated");
+const roleListPaginate = require("./socket/handler/roles/paginated")
+const gatewayListPaginate = require("./socket/handler/gateway/paginated")
+const deviceListPaginate = require("./socket/handler/device/paginated")
+const scheduleListPaginate = require("./socket/handler/schedule/paginated")
 
 let io;
 
@@ -52,6 +57,13 @@ function initSocket(httpServer) {
     logger.info(
       `[WebSocket] Client terhubung: ${socket.id} (user: ${socket.user?.id})`,
     );
+
+    // Add To Event User, Device, Schedule, Role, Gateway
+    userListPaginate(io, socket)
+    roleListPaginate(io, socket)
+    gatewayListPaginate(io, socket)
+    deviceListPaginate(io, socket)
+    scheduleListPaginate(io, socket)
 
     try {
       if (
