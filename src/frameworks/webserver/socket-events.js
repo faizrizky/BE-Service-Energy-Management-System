@@ -205,6 +205,14 @@ module.exports = {
   emitRoleListTabel: (data) => emit("role:list", data),
   emitUserListTabel: (data) => emit("user:list", data),
 
+  emitUserCreated: (users) => emit("users:created", { users }),
+  emitUserUpdated: (userId, users) => emit("users:updated", { userId, users }),
+  emitUserDeleted: (userId, users) => emit("users:deleted", { userId, users }),
+
+  emitRoleCreated: (roles) => emit("role:created", { roles }),
+  emitRoleUpdated: (roleId, roles) => emit("role:updated", { roleId, roles }),
+  emitRoleDeleted: (roleId, roles) => emit("role:deleted", { roleId, roles }),
+
 
   /**
    * Event notif:created abis notification dibikin.
