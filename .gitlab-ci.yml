@@ -267,3 +267,104 @@ notify_staging_deploy_failure:
       *Image:* ${TAG_COMMIT}
 
       *Pipeline URL:* ${CI_PIPELINE_URL}
+
+# ==========================================
+# BUILD PRODUCTION
+# ==========================================
+build_prod:
+  stage: build
+  image:
+    name: moby/buildkit:latest
+    entrypoint: [""]
+  before_script:
+    - mkdir -p ~/.docker
+    - |
+      cat > ~/.docker/config.json <<EOF
+      {
+        "auths": {
+          "registry.falahtech.com": {
+            "username": "${DOCKER_USER}",
+            "password": "${DOCKER_PASSWORD}"
+          }
+        }
+      }
+      EOF
+  script:
+    # - printf "%s" "$ENV_PRODUCTION" > .env.production
+    # - chmod 600 .env.production
+    - |
+      set -e
+      BUILD_STARTED_AT="$(date +%s)"
+
+      write_build_duration() {
+        status=$?
+        BUILD_FINISHED_AT="$(date +%s)"
+        BUILD_DURATION_SECONDS=$((BUILD_FINISHED_AT - BUILD_STARTED_AT))
+        echo "BUILD_DURATION_SECONDS=${BUILD_DURATION_SECONDS}" > build-prod.env
+        exit "$status"
+      }
+
+      trap write_build_duration EXIT
+
+      echo "Using BuildKit service: $BUILDKIT_SERVICE"
+      buildctl --addr "$BUILDKIT_SERVICE" debug workers
+      buildctl --addr "$BUILDKIT_SERVICE" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --opt filename=Dockerfile \
+        --output type=image,name=${TAG_COMMIT},push=true \
+        --output type=image,name=${TAG_PROD_LATEST},push=true \
+        --output type=image,name=${TAG_VERSION},push=true
+  artifacts:
+    when: always
+    reports:
+      dotenv: build-prod.env
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+  retry: 1
+
+# ==========================================
+# NOTIFIKASI BUILD PRODUCTION
+# ==========================================
+notify_build_prod_success:
+  stage: build
+  extends: .notify_base
+  needs:
+    - job: build_prod
+      artifacts: true
+  when: on_success
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+  variables:
+    INCLUDE_BUILD_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      📦 *BUILD & PUSH SUCCESS* 📦
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Production
+      *Version:* ${CI_COMMIT_TAG}
+      *Image:* ${TAG_VERSION}
+
+notify_build_prod_failure:
+  stage: build
+  extends: .notify_base
+  needs:
+    - job: build_prod
+      artifacts: true
+  when: on_failure
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+  variables:
+    INCLUDE_BUILD_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ❌ *BUILD & PUSH FAILED* ❌
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Production
+      *Version:* ${CI_COMMIT_TAG}
+      *Triggered by:* ${GITLAB_USER_NAME}
+
+      *Pipeline URL:* ${CI_PIPELINE_URL}
