@@ -10,6 +10,10 @@ const gatewayListPaginate = require("./socket/handler/gateway/paginated")
 const deviceListPaginate = require("./socket/handler/device/paginated")
 const scheduleListPaginate = require("./socket/handler/schedule/paginated")
 const roomListPaginate = require("./socket/handler/rooms/paginated")
+const dashboardActiveUpcoming = require("./socket/handler/schedule/dashboard-active-upcoming")
+const dashboardSummary = require("./socket/handler/dashboard-summary")
+const dashboardUsageTimeline = require("./socket/handler/dashboard-usage-timeline")
+const dashboardTopRisky = require("./socket/handler/dashbord-top-risky")
 
 let io;
 
@@ -59,13 +63,17 @@ function initSocket(httpServer) {
       `[WebSocket] Client terhubung: ${socket.id} (user: ${socket.user?.id})`,
     );
 
-    // Add To Event User, Device, Schedule, Role, Gateway, Rooms
+    // Add To Event User, Device, Schedule, Role, Gateway, Rooms, Dashboard
     userListPaginate(io, socket)
     roleListPaginate(io, socket)
     gatewayListPaginate(io, socket)
     deviceListPaginate(io, socket)
     scheduleListPaginate(io, socket)
     roomListPaginate(io, socket)
+    dashboardActiveUpcoming(io, socket)
+    dashboardSummary(io, socket)
+    dashboardUsageTimeline(io, socket)
+    dashboardTopRisky(io, socket)
 
     try {
       if (
