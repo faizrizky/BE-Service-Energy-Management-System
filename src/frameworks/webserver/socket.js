@@ -9,6 +9,7 @@ const roleListPaginate = require("./socket/handler/roles/paginated")
 const gatewayListPaginate = require("./socket/handler/gateway/paginated")
 const deviceListPaginate = require("./socket/handler/device/paginated")
 const scheduleListPaginate = require("./socket/handler/schedule/paginated")
+const roomListPaginate = require("./socket/handler/rooms/paginated")
 
 let io;
 
@@ -58,12 +59,13 @@ function initSocket(httpServer) {
       `[WebSocket] Client terhubung: ${socket.id} (user: ${socket.user?.id})`,
     );
 
-    // Add To Event User, Device, Schedule, Role, Gateway
+    // Add To Event User, Device, Schedule, Role, Gateway, Rooms
     userListPaginate(io, socket)
     roleListPaginate(io, socket)
     gatewayListPaginate(io, socket)
     deviceListPaginate(io, socket)
     scheduleListPaginate(io, socket)
+    roomListPaginate(io, socket)
 
     try {
       if (
