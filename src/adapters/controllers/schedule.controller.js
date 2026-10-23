@@ -1,4 +1,5 @@
 const scheduleUseCase = require("../../application/use_cases/schedule/schedule.usecase");
+const { cardSchedule } = require("../../application/use_cases/schedule/schedule-card")
 const { createNotification } = require("../../frameworks/helpers/notification")
 
 /**
@@ -76,6 +77,8 @@ async function store(req, res, next) {
       readAt: "false"
     })
 
+    await cardSchedule(schedule)
+
     res.status(201).json({ data: schedule });
   } catch (err) {
     next(err);
@@ -104,6 +107,8 @@ async function update(req, res, next) {
       req.params.id,
       req.body,
     );
+
+    await cardSchedule(schedule)
 
     res.json({ data: schedule });
   } catch (err) {
