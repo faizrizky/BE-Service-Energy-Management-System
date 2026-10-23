@@ -223,6 +223,7 @@ module.exports = {
   emitRoleUpdated: (roles) => emit("roles:updated", { roles }),
   emitRoleDeleted: (roles) => emit("roles:deleted", { roles }),
 
+  emitScheduleCard: (data) => emit("dashboard:schedule:status:card", {data}),
 
   /**
    * Event notif:created abis notification dibikin.
