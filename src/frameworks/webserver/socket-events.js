@@ -1,5 +1,15 @@
-const { getIO } = require("./socket");
 const logger = require("../helpers/logger");
+
+/**
+ * Ambil instance Socket.IO secara lazy. Sengaja require di dalam fungsi
+ * karena socket.js → handler → usecase → file ini → socket.js itu circular;
+ * kalo di-require di atas, getIO bakal undefined.
+ *
+ * Dipake di: emit, emitToRoom di file ini.
+ */
+function getIO() {
+  return require("./socket").getIO();
+}
 
 /**
  * Kirim event Socket.IO ke semua client. Kalo socket belom siap, cuma dicatet
