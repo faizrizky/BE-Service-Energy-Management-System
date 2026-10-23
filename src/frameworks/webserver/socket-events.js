@@ -216,12 +216,12 @@ module.exports = {
   emitUserListTabel: (data) => emit("user:list", data),
 
   emitUserCreated: (users) => emit("users:created", { users }),
-  emitUserUpdated: (userId, users) => emit("users:updated", { userId, users }),
-  emitUserDeleted: (userId, users) => emit("users:deleted", { userId, users }),
+  emitUserUpdated: (users) => emit("users:updated", { users }),
+  emitUserDeleted: (users) => emit("users:deleted", { users }),
 
-  emitRoleCreated: (roles) => emit("role:created", { roles }),
-  emitRoleUpdated: (roleId, roles) => emit("role:updated", { roleId, roles }),
-  emitRoleDeleted: (roleId, roles) => emit("role:deleted", { roleId, roles }),
+  emitRoleCreated: (roles) => emit("roles:created", { roles }),
+  emitRoleUpdated: (roles) => emit("roles:updated", { roles }),
+  emitRoleDeleted: (roles) => emit("roles:deleted", { roles }),
 
 
   /**
