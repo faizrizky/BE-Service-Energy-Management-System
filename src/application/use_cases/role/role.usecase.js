@@ -2,6 +2,8 @@ const { httpError } = require("../../../frameworks/helpers/httpError");
 const { prisma } = require("../../../frameworks/database/prismaClient");
 const { escapeLike } = require("../../../frameworks/helpers/likeEscape");
 
+const { emitRoleCreated, emitRoleUpdated, emitRoleDeleted } = require("../../../frameworks/webserver/socket-events");
+
 /**
  * List role pake paginasi (urut nama) dan search nama, plus permission &
  * jumlah user-nya.
@@ -78,6 +80,7 @@ async function createRole(data) {
     await assignPermissions(role.id, data.permissionIds);
   }
 
+  emitRoleCreated(role)
   return role;
 }
 
@@ -104,6 +107,7 @@ async function updateRole(id, data) {
     await assignPermissions(id, data.permissionIds);
   }
 
+  emitRoleUpdated(role)
   return role;
 }
 

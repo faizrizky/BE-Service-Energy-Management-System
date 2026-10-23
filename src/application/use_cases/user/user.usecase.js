@@ -6,6 +6,8 @@ const {
   revokeSession,
 } = require("../../../frameworks/helpers/sessionRevocation");
 
+const { emitUserCreated, emitUserUpdated, emitUserDeleted } = require("../../../frameworks/webserver/socket-events");
+
 /**
  * Buang passwordHash dari data user dan ringkes role jadi { id, name } sebelum
  * dikirim ke client.
@@ -138,6 +140,7 @@ async function createUser(data) {
     include: { role: true },
   });
 
+  emitUserCreated(sanitizeUser(user))
   return sanitizeUser(user);
 }
 
@@ -161,6 +164,7 @@ async function updateUser(id, data) {
     include: { role: true },
   });
 
+  emitUserUpdated(sanitizeUser(user))
   return sanitizeUser(user);
 }
 
