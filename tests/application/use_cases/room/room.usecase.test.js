@@ -260,7 +260,8 @@ describe("listRoomsPaginated", () => {
     prisma.room.findMany.mockResolvedValue([]);
     await roomUseCase.listRoomsPaginated({ search: "srv", createdFrom: "2026-09-01", createdTo: "2026-09-02", page: 2, rowsPerPage: 5 });
     const { where, skip, take } = prisma.room.findMany.mock.calls[0][0];
-    expect(where.AND[0].OR).toHaveLength(3);
+    // Pencarian Room hanya berdasarkan nama (28dde8d).
+    expect(where.AND[0].OR).toEqual([{ name: { contains: "srv", mode: "insensitive" } }]);
     expect(where.AND[1].createdAt.lte.getHours()).toBe(23);
     expect([skip, take]).toEqual([5, 5]);
   });
