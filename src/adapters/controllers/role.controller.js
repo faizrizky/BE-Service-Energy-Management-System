@@ -1,5 +1,6 @@
 const roleUseCase = require("../../application/use_cases/role/role.usecase");
 const { createNotification } = require("../../frameworks/helpers/notification")
+const { emitRoleDeleted } = require("../../frameworks/webserver/socket-events");
 
 /**
  * Handler list role pake paginasi, plus permission & jumlah user-nya.
@@ -112,6 +113,13 @@ async function destroy(req, res, next) {
       })
 
       await roleUseCase.deleteRole(req.params.id);
+
+      const roles = await roleUseCase.listRolesPaginated({
+        search,
+        page: Number(1),
+        rowsPerPage: Number(10),
+      });
+      emitRoleDeleted(roles)
     }
     res.status(204).send();
   } catch (err) {

@@ -2,7 +2,7 @@ const { prisma } = require("../../../frameworks/database/prismaClient");
 const { httpError } = require("../../../frameworks/helpers/httpError");
 const {  emitScheduleCard } = require("../../../frameworks/webserver/socket-events");
 
-async function cardSchedule(data) {
+async function cardSchedule(data = null) {
     const schedules = await prisma.schedule.findMany({
         select: {
         id: true,
