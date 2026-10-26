@@ -134,8 +134,8 @@ async function destroy(req, res, next) {
       readAt: "false"
     })
 
-    await cardSchedule()
     await scheduleUseCase.deleteSchedule(req.params.id);
+    await cardSchedule()
 
     res.status(204).send();
   } catch (err) {
