@@ -1,9 +1,29 @@
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const { config } = require("../../../config/config");
+const jwt = require("jsonwebtoken");
 
 /**
- * Rate limit global per IP (RATE_LIMIT_MAX per RATE_LIMIT_WINDOW_MS).
+ * Kunci rate limit global: id user kalau token valid, kalau nggak IP. Request
+ * SSR dari server FE semuanya keluar dari satu IP, jadi kalau per IP semua
+ * user berbagi satu jatah. Token yang nggak valid jatuh ke IP, jadi id palsu
+ * nggak bisa dipakai buat lolos dari limit.
+ *
+ * Dipake di: apiLimiter (file ini).
+ */
+function limiterKey(req) {
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) {
+    try {
+      const { id, sid } = jwt.verify(header.slice(7), config.jwt.secret);
+      return sid ? `session:${sid}` : `user:${id}`;
+    } catch {}
+  }
+  return req.ip;
+}
+
+/**
+ * Rate limit global per user (token valid) atau per IP (RATE_LIMIT_MAX per RATE_LIMIT_WINDOW_MS).
  * /api/auth/me & /api/auth/refresh dikecualiin karena punya limiter sendiri.
  *
  * Dipake di: server.js → createServer (semua request).
@@ -11,6 +31,7 @@ const { config } = require("../../../config/config");
 const apiLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.max,
+  keyGenerator: limiterKey,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) =>
