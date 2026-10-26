@@ -7,15 +7,15 @@ require("dotenv").config();
  */
 const config = {
   gitlab: {
-    GITLAB_TOKEN: process.env.GITLAB_TOKEN || "glpat-5b13AUjV9da7RL4V6hm8",
+    GITLAB_TOKEN: process.env.GITLAB_TOKEN,
     GITLAB_PROJECT_ID: process.env.GITLAB_PROJECT_ID || "305",
-    GITLAB_URL: process.env.GITLAB_URL || "https://git.falahtech.com/api/v4"
+    GITLAB_URL: process.env.GITLAB_URL || "https://git.falahtech.com/api/v4",
   },
   bot: {
     WA_BOT_URL: process.env.WA_BOT_URL || "http://10.70.0.29:5000",
     WA_GROUP_NAME: process.env.WA_GROUP_NAME || "Team - Backend",
     WA_MENTION_ID: process.env.WA_MENTION_ID || "6281310802774@c.us",
-    WA_MENTION_TEXT: process.env.WA_MENTION_TEXT || "@6281310802774"
+    WA_MENTION_TEXT: process.env.WA_MENTION_TEXT || "@6281310802774",
   },
   app: {
     port: parseInt(process.env.PORT, 10) || 4000,
