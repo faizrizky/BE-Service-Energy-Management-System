@@ -413,7 +413,7 @@ notify_production_deploy_success:
   stage: deploy
   extends: .notify_base
   needs:
-    - job: deploy
+    - job: deploy_prod
   when: on_success
   variables:
     INCLUDE_PIPELINE_DURATION: "true"
@@ -434,7 +434,7 @@ notify_production_deploy_failure:
   stage: deploy
   extends: .notify_base
   needs:
-    - job: deploy
+    - job: deploy_prod
   when: on_failure
   variables:
     INCLUDE_PIPELINE_DURATION: "true"
