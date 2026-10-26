@@ -106,6 +106,10 @@ describe("createRole", () => {
 });
 
 describe("updateRole", () => {
+  beforeEach(() => {
+    prisma.role.findUnique.mockResolvedValue({ id: "r1", name: "Teknisi", isSystem: false });
+  });
+
   test("[positive] permissionIds dikirim -> permission lama dihapus lalu diganti", async () => {
     prisma.role.update.mockResolvedValue({ id: "r1" });
     await roleUseCase.updateRole("r1", { name: "Op", permissionIds: ["p3"] });
@@ -133,9 +137,23 @@ describe("updateRole", () => {
     expect(prisma.rolePermission.deleteMany).not.toHaveBeenCalled();
   });
 
-  test("[negative] role tidak ada (P2025) diteruskan", async () => {
-    prisma.role.update.mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }));
-    await expect(roleUseCase.updateRole("x", { name: "a" })).rejects.toMatchObject({ code: "P2025" });
+  test("[negative] role bawaan (isSystem) -> 409, nama & permission nggak berubah sama sekali", async () => {
+    prisma.role.findUnique.mockResolvedValue({ id: "r-admin", name: "Administrator", isSystem: true });
+    await expect(
+      roleUseCase.updateRole("r-admin", { name: "Hack", permissionIds: [] }),
+    ).rejects.toMatchObject({ status: 409, message: 'Role bawaan "Administrator" tidak bisa diubah' });
+    expect(prisma.role.update).not.toHaveBeenCalled();
+    expect(prisma.rolePermission.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.rolePermission.createMany).not.toHaveBeenCalled();
+  });
+
+  test("[negative] role nggak ada -> 404 (bukan error Prisma 500)", async () => {
+    prisma.role.findUnique.mockResolvedValue(null);
+    await expect(roleUseCase.updateRole("x", { name: "a" })).rejects.toMatchObject({
+      status: 404,
+      message: "Role tidak ditemukan",
+    });
+    expect(prisma.role.update).not.toHaveBeenCalled();
   });
 });
 
