@@ -1,5 +1,6 @@
 const userUseCase = require("../../application/use_cases/user/user.usecase");
 const { createNotification } = require("../../frameworks/helpers/notification");
+const { emitUserDeleted } = require("../../frameworks/webserver/socket-events");
 
 /**
  * Handler list user pake paginasi, bisa filter role, search, sama tanggal.
@@ -123,6 +124,16 @@ async function destroy(req, res, next) {
       });
 
       await userUseCase.deleteUser(req.params.id, req.user.id);
+
+      const users = await userUseCase.listUsersPaginated({
+          search,
+          roleId,
+          createdFrom,
+          createdTo,
+          page: Number(1),
+          rowsPerPage: Number(10),
+      });
+      emitUserDeleted(users)
     }
     res.status(204).send();
   } catch (err) {
