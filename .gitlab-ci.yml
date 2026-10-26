@@ -3,6 +3,9 @@ variables:
   TAG_COMMIT: "$REPOSITORY/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA"
   TAG_LATEST: "$REPOSITORY/$CI_PROJECT_NAME:latest"
   TAG_CACHE: "$REPOSITORY/$CI_PROJECT_NAME:buildcache"
+  TAG_PROD_LATEST: "$REPOSITORY/$SERVICE_NAME:prod-latest"
+  TAG_VERSION: "$REPOSITORY/$SERVICE_NAME:$CI_COMMIT_TAG"
+  PROD_REPO: "$DEPLOYMENT_REPOSITORY"
   BRANCH: "$CI_COMMIT_REF_NAME"
   BUILDKIT_NO_CLIENT_TOKEN: "1"
 
@@ -368,3 +371,70 @@ notify_build_prod_failure:
       *Triggered by:* ${GITLAB_USER_NAME}
 
       *Pipeline URL:* ${CI_PIPELINE_URL}
+
+# ==========================================
+# DEPLOY PRODUCTION
+# ==========================================
+
+# deploy:
+#   stage: deploy
+#   # image: alpine:3.17
+#   image: ringcentral/sshpass:latest
+#   dependencies:
+#     - build
+#   before_script:
+#     - apk add --no-cache git jq
+#     - echo "Starting Deployments"
+#   script: |- 
+#       sshpass -e ssh -o StrictHostKeyChecking=no "$SSHUSER@$SSHSERVER" "
+#         cd $BASE_DIR && cd $API_DIR &&
+#         $DOCKER_COMMAND &&
+#         echo 'Deployment of EMS Service production completed.'
+#       "
+#   rules:
+#     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+
+# ==========================================
+# NOTIFIKASI DEPLOY PRODUCTION
+# ==========================================
+notify_production_deploy_success:
+  stage: deploy
+  extends: .notify_base
+  needs:
+    - job: deploy
+  when: on_success
+  variables:
+    INCLUDE_PIPELINE_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ✅ *DEPLOYMENT SUCCESS* ✅
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Production
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+      *Image:* ${TAG_COMMIT}
+
+      *Pipeline URL:* ${CI_PIPELINE_URL}
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
+
+notify_production_deploy_failure:
+  stage: deploy
+  extends: .notify_base
+  needs:
+    - job: deploy
+  when: on_failure
+  variables:
+    INCLUDE_PIPELINE_DURATION: "true"
+    NOTIFY_MESSAGE: |-
+      ❌ *DEPLOYMENT FAILED* ❌
+
+      *Project:* ${CI_PROJECT_NAME}
+      *Environment:* Production
+      *Branch:* ${CI_COMMIT_REF_NAME}
+      *Triggered by:* ${GITLAB_USER_NAME}
+      *Image:* ${TAG_COMMIT}
+
+      *Pipeline URL:* ${CI_PIPELINE_URL}
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+-production$/'
