@@ -405,14 +405,18 @@ async function updateDevice(id, data) {
   const nextDeviceType =
     data.deviceType === undefined ? existing.deviceType : data.deviceType;
 
-  if (targetDevEui) {
+  const devEuiChanged = !sameDevEui(existing.eui, targetDevEui);
+  const csFieldsChange =
+    devEuiChanged ||
+    nextName !== existing.name ||
+    nextDeviceType !== existing.deviceType;
+
+  if (targetDevEui && csFieldsChange) {
     await ensureCsDeviceRegistered(targetDevEui, {
       name: nextName,
       description: nextDeviceType || "",
     });
   }
-
-  const devEuiChanged = !sameDevEui(existing.eui, targetDevEui);
 
   if (existing.eui && devEuiChanged) {
     logger.info(

@@ -126,10 +126,6 @@ async function destroy(req, res, next) {
       await userUseCase.deleteUser(req.params.id, req.user.id);
 
       const users = await userUseCase.listUsersPaginated({
-          search,
-          roleId,
-          createdFrom,
-          createdTo,
           page: Number(1),
           rowsPerPage: Number(10),
       });

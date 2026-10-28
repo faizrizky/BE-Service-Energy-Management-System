@@ -115,7 +115,6 @@ async function destroy(req, res, next) {
       await roleUseCase.deleteRole(req.params.id);
 
       const roles = await roleUseCase.listRolesPaginated({
-        search,
         page: Number(1),
         rowsPerPage: Number(10),
       });
