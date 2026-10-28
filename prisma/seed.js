@@ -73,10 +73,11 @@ const ROLE_PERMISSIONS = {
     ["gateway", "delete"],
 
     // Report
-    ["report", "view"],
+    // ["report", "view"],
 
     // Notification
     ["notification", "view"],
+    ["notification", "manage"],
   ],
   Komandan: [
     // Energy monitoring
