@@ -211,7 +211,7 @@ const setRelay = (
   { wakeTimeout = 60000, relayTimeout = 30000 } = {},
 ) =>
   csRequest(
-    `/api/relay/wake`,
+    `/api/relay`,
     {
       method: "POST",
       body: JSON.stringify({
